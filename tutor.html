@@ -38,6 +38,15 @@ h1{font:600 1.5rem/1.1 var(--display);margin:0}
 .tip{align-self:flex-start;max-width:88%;background:var(--tip-bg);border:1px solid var(--tip-line);border-radius:12px;padding:10px 14px;font-size:.95rem}
 .tip b{display:block;font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:2px}
 .replay{background:none;border:0;color:var(--accent);font:700 .85rem var(--body);padding:4px 0 0;cursor:pointer;display:block}
+.fix{align-self:flex-start;max-width:88%;background:var(--tip-bg);border:1px solid var(--tip-line);border-radius:12px;padding:10px 14px;display:flex;flex-direction:column;gap:6px;font-size:.95rem}
+.fix .k{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.fix .orig{text-decoration:line-through;text-decoration-color:var(--live);color:var(--muted)}
+.fix .good{font-weight:700}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.smallbtn{border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:999px;padding:8px 14px;font:700 .9rem var(--body);cursor:pointer}
+.seg{display:flex;gap:8px}
+.seg button{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:10px;padding:10px;font:700 .95rem var(--body);cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .sys{align-self:center;color:var(--muted);font-size:.85rem;text-align:center}
 footer{border-top:1px solid var(--line);background:var(--bg);padding-top:12px;padding-bottom:max(14px,env(safe-area-inset-bottom))}
 .bar{display:flex;align-items:center;justify-content:center;gap:16px}
@@ -115,12 +124,23 @@ input[type=range]{width:100%}
       </select>
     </div>
     <div class="field">
-      <label class="label" for="rate">Tutor speed: <span id="rateVal">0.8</span>x</label>
+      <span class="label">Tutor speed</span>
+      <div class="seg" id="speedSeg"><button data-rate="0.8">Slow</button><button data-rate="1">Normal</button></div>
+      <label class="help" for="rate">Fine-tune: <span id="rateVal">0.8</span>x</label>
       <input id="rate" type="range" min="0.5" max="1.2" step="0.05" value="0.8">
     </div>
     <div class="field">
       <label class="label" for="voice">Tutor voice</label>
       <select id="voice"><option>Loading voices…</option></select>
+      <span class="label">Voice tone</span>
+      <div class="seg" id="toneSeg"><button data-pitch="0.8">Deeper</button><button data-pitch="1">Natural</button><button data-pitch="1.2">Higher</button></div>
+      <p class="help">Android usually offers one US voice. "Deeper" and "Higher" change its pitch so it sounds more male or female.</p>
+      <button class="smallbtn" id="preview" type="button">▶ Preview voice</button>
+    </div>
+    <div class="field">
+      <span class="label">Wait for me when I pause</span>
+      <div class="seg" id="pauseSeg"><button data-pause="short">Short</button><button data-pause="normal">Normal</button><button data-pause="long">Long</button></div>
+      <p class="help">Choose "Long" if you often stop to think. Tap the red mic to send right away.</p>
     </div>
     <button class="primary" id="saveSettings">Save</button>
   </div></div>
@@ -156,7 +176,7 @@ function startTopic(t){
   $("log").innerHTML="";
   addSys(`Topic: ${t.name}`);
   addTutor(t.open);
-  history.push({role:"assistant",text:JSON.stringify({reply:t.open,correction:"",better:""})});
+  history.push({role:"assistant",text:JSON.stringify({reply:t.open,better:"",why:"",unclear:false})});
 }
 
 /* ---------- Chat UI ---------- */
@@ -168,6 +188,17 @@ function addTutor(t){
   const d=document.createElement("div"); d.className="msg tutor"; d.textContent=t;
   const r=document.createElement("button"); r.className="replay"; r.textContent="▶ Hear again"; r.onclick=()=>speak(t,false);
   d.appendChild(r); log.appendChild(d); scroll();
+}
+function addFix(original,better,why){
+  const d=document.createElement("div"); d.className="fix";
+  const add=(k,t,cls)=>{ const l=document.createElement("div"); l.className="k"; l.textContent=k; const v=document.createElement("div"); if(cls) v.className=cls; v.textContent=t; d.append(l,v); };
+  add("You said",original,"orig");
+  add("Better",better,"good");
+  if(why) add("Why",why);
+  const row=document.createElement("div"); row.className="btnrow";
+  const hear=document.createElement("button"); hear.className="smallbtn"; hear.textContent="▶ Hear it"; hear.onclick=()=>speak(better,false);
+  const slow=document.createElement("button"); slow.className="smallbtn"; slow.textContent="▶ Very slow"; slow.onclick=()=>speak(better,false,0.6);
+  row.append(hear,slow); d.appendChild(row); log.appendChild(d); scroll();
 }
 function addTip(correction,better){
   const d=document.createElement("div"); d.className="tip";
@@ -186,16 +217,16 @@ function loadVoices(){
   const score=v=>(v.lang==="en-US"?10:0)+(/google/i.test(v.name)?5:0);
   voices.sort((a,b)=>score(b)-score(a));
   const saved=store.get("voice","");
-  $("voice").innerHTML=voices.map((v,i)=>`<option value="${i}" ${v.name===saved?"selected":""}>${v.name} (${v.lang})</option>`).join("");
+  $("voice").innerHTML=voices.map((v,i)=>`<option value="${i}" ${v.name===saved?"selected":""}>${/en[-_]US/i.test(v.lang)?"US · ":""}${v.name}</option>`).join("");
 }
 if("speechSynthesis" in window){ loadVoices(); speechSynthesis.onvoiceschanged=loadVoices; }
 
-function speak(text,thenListen){
+function speak(text,thenListen,rateOverride){
   if(!("speechSynthesis" in window)||!text){ if(thenListen) maybeAutoListen(); return; }
   speechSynthesis.cancel();
   const u=new SpeechSynthesisUtterance(text);
   const v=voices[+$("voice").value]; if(v){u.voice=v;u.lang=v.lang}else u.lang="en-US";
-  u.rate=+$("rate").value;
+  u.rate=rateOverride||+$("rate").value; u.pitch=+store.get("pitch","1");
   u.onstart=()=>setStatus("Tutor is speaking…");
   u.onend=()=>{ setStatus("Tap the mic and speak"); if(thenListen) maybeAutoListen(); };
   speechSynthesis.speak(u);
@@ -204,42 +235,96 @@ function maybeAutoListen(){ if($("auto").checked) setTimeout(startListening,400)
 $("stopTalk").onclick=()=>{ speechSynthesis.cancel(); $("auto").checked=false; setStatus("Tap the mic and speak"); };
 
 /* ---------- Voice in ---------- */
+// Listens in rounds: after you finish a phrase it keeps listening a little longer,
+// so short pauses while you think don't cut you off. A longer pause sends your words.
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-let rec=null, listening=false, busy=false;
+let rec=null, listening=false, busy=false, session=null, misses=0;
 const mic=$("mic");
 function setStatus(t){ $("status").textContent=t; }
+const PAUSES={short:1200,normal:2000,long:3200};
+const pauseMs=()=>PAUSES[store.get("pause","normal")]||2000;
+const LOW_CONF=0.55; // below this, the phone was unsure what it heard
 
 function startListening(){
   if(!SR){ addSys("Speech recognition needs the Chrome app on Android."); return; }
   if(busy||listening) return;
   speechSynthesis.cancel();
-  rec=new SR(); rec.lang=$("lang").value; rec.interimResults=true; rec.continuous=false;
-  let finalText="", interim="", draft=null;
-  rec.onstart=()=>{ listening=true; mic.classList.add("on"); setStatus("Listening… speak now"); };
-  rec.onresult=e=>{
-    interim="";
-    for(let i=e.resultIndex;i<e.results.length;i++){
-      const r=e.results[i]; if(r.isFinal) finalText+=r[0].transcript; else interim+=r[0].transcript;
-    }
-    // live preview bubble: see what the phone hears while you speak
-    if(!draft){ draft=document.createElement("div"); draft.className="msg me"; draft.style.opacity=".6"; log.appendChild(draft); }
-    draft.textContent=(finalText+interim).trim(); scroll();
-  };
-  rec.onerror=e=>{
-    const m={"not-allowed":"Microphone blocked. Tap the icon left of the web address → Permissions → Microphone → Allow.",
-             "no-speech":"I didn't hear anything. Tap the mic and try again.",
-             "network":"No internet connection."};
-    if(e.error!=="aborted") addSys(m[e.error]||("Mic error: "+e.error));
-  };
-  rec.onend=()=>{
-    listening=false; mic.classList.remove("on");
-    const t=(finalText||interim).trim();
-    if(draft) draft.remove();
-    if(t) sendToTutor(t); else setStatus("Tap the mic and speak");
-  };
-  try{ rec.start(); }catch{}
+  session={segments:[],confs:[],draft:null,lastError:"",stopNow:false};
+  listening=true; mic.classList.add("on"); mic.setAttribute("aria-label","Stop and send");
+  runRound(session);
 }
-mic.onclick=()=> listening ? rec.stop() : startListening();
+
+function runRound(s){
+  rec=new SR(); rec.lang=$("lang").value; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
+  let finalText="", interim="", waitTimer=null;
+  const showDraft=()=>{
+    if(!s.draft){ s.draft=document.createElement("div"); s.draft.className="msg me"; s.draft.style.opacity=".6"; log.appendChild(s.draft); }
+    s.draft.textContent=[...s.segments,(finalText+interim).trim()].join(" ").trim(); scroll();
+  };
+  rec.onstart=()=>{
+    if(s.segments.length){
+      setStatus("Keep talking… or pause to send");
+      waitTimer=setTimeout(()=>{ try{rec.abort()}catch{} },pauseMs());   // silence = you're done
+    } else setStatus("Listening… speak now");
+  };
+  rec.onresult=e=>{
+    clearTimeout(waitTimer); interim="";
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const r=e.results[i];
+      if(r.isFinal){ finalText+=r[0].transcript; if(r[0].confidence>0) s.confs.push(r[0].confidence); }
+      else interim+=r[0].transcript;
+    }
+    showDraft();
+  };
+  rec.onerror=e=>{ s.lastError=e.error; };
+  rec.onend=()=>{
+    clearTimeout(waitTimer);
+    if(session!==s) return;
+    const t=(finalText||interim).trim();
+    if(t) s.segments.push(t);
+    if(s.stopNow||!t||s.lastError==="not-allowed"||s.lastError==="network") finishListening(s);
+    else runRound(s);   // you said something: listen for more
+  };
+  try{ rec.start(); }catch{ finishListening(s); }
+}
+
+function finishListening(s){
+  if(session!==s) return;
+  session=null; listening=false; mic.classList.remove("on"); mic.setAttribute("aria-label","Start speaking");
+  if(s.draft) s.draft.remove();
+  const text=s.segments.join(" ").replace(/\s+/g," ").trim();
+  if(!text){
+    const m={"not-allowed":"Microphone blocked. Tap the icon left of the web address → Permissions → Microphone → Allow.",
+             "network":"No internet connection. Speech recognition needs internet.",
+             "audio-capture":"No microphone found. Close other apps using the mic."};
+    if(m[s.lastError]) addSys(m[s.lastError]);
+    else if($("auto").checked && ++misses<2){ setStatus("I'm listening…"); setTimeout(startListening,300); return; }
+    else addSys("I didn't hear anything. Tap the mic when you're ready.");
+    misses=0; setStatus("Tap the mic and speak"); return;
+  }
+  misses=0;
+  const avg=s.confs.length?s.confs.reduce((a,b)=>a+b,0)/s.confs.length:1;
+  if(avg<LOW_CONF) askToRepeat(text); else sendToTutor(text);
+}
+
+// The phone wasn't sure: show what it heard and ask, instead of guessing
+function askToRepeat(text){
+  const d=document.createElement("div"); d.className="tip";
+  const b=document.createElement("b"); b.textContent="Did I hear you right?"; d.appendChild(b);
+  const q=document.createElement("div"); q.textContent="“"+text+"”"; d.appendChild(q);
+  const row=document.createElement("div"); row.className="btnrow";
+  const yes=document.createElement("button"); yes.className="smallbtn"; yes.textContent="Yes, send";
+  const again=document.createElement("button"); again.className="smallbtn"; again.textContent="Say it again";
+  yes.onclick=()=>{ d.remove(); sendToTutor(text); };
+  again.onclick=()=>{ d.remove(); startListening(); };
+  row.append(yes,again); d.appendChild(row); log.appendChild(d); scroll();
+  speak("Sorry, I didn't catch that clearly. Please say it again.",true);
+}
+
+mic.onclick=()=>{
+  if(listening&&session){ session.stopNow=true; try{rec.stop()}catch{} }
+  else startListening();
+};
 
 /* ---------- Tutor brain: Groq first (fast), Gemini as backup ---------- */
 // history items: {role:"user"|"assistant", text}
@@ -248,15 +333,18 @@ function systemPrompt(){
   return `You are Bolo, a warm, patient English speaking tutor for an adult in Pakistan with a medical (nursing) background.
 The learner speaks with a Pakistani accent and often mixes Urdu (in Roman script) with English.
 IMPORTANT: the learner's words come from phone speech-to-text, which often mishears accented speech (e.g. "Amo" for "I'm a", "constructor rule" for "instructor role"). Always guess the most likely intended words using context (nursing, healthcare, teaching, daily life).
-- If a word looks misheard, do NOT treat it as the learner's mistake and do NOT correct it. If the meaning is unclear, briefly ask "Did you mean ...?" inside "reply".
+- If a word looks misheard, do NOT treat it as the learner's mistake and do NOT correct it. If one word is unclear, briefly ask "Did you mean ...?" inside "reply".
+- If the whole message is too garbled to understand, do NOT invent a meaning: set "unclear" to true and in "reply" kindly ask them to say it again.
 - Only correct real grammar or word-choice mistakes that would still be wrong with the intended words.
 Current practice topic: ${topic.name}.
 Rules:
 - Reply in simple, clear, natural English (American or neutral). Keep "reply" short: 1-2 short sentences, then ONE easy follow-up question to keep the conversation going.
-- If the learner made a real grammar or word mistake, or used Urdu words, put ONE gentle tip in "correction" (max 15 words, encouraging) and the corrected natural sentence in "better". Focus on the most useful single fix only.
-- If the sentence was fine, set "correction" and "better" to empty strings and praise naturally inside "reply" now and then.
+- First understand what the learner MEANS, then respond to that meaning.
+- If the learner made a real grammar or word-choice mistake, or used Urdu words: put their whole sentence rewritten in natural American English in "better", and ONE short, simple reason in "why" (max 12 words, kind tone, e.g. "Use past tense 'went' for yesterday.").
+- Ignore capitalization, punctuation and tiny slips that don't matter when speaking.
+- If the sentence was fine, set "better" and "why" to empty strings and praise naturally inside "reply" now and then.
 - Never use Urdu in your reply. Never lecture. Never use lists, emojis or markdown.
-Answer ONLY as JSON: {"reply": string, "correction": string, "better": string}`;
+Answer ONLY as JSON: {"reply": string, "better": string, "why": string, "unclear": boolean}`;
 }
 
 // fetch with a time limit, so one stuck model never blocks the conversation
@@ -374,28 +462,43 @@ async function sendToTutor(userText){
     setStatus("Tap the mic and speak"); return;
   }
   let out;
-  try{ const m=res.raw.match(/\{[\s\S]*\}/); out=JSON.parse(m?m[0]:res.raw); }catch{ out={reply:res.raw,correction:"",better:""}; }
-  history.push({role:"assistant",text:JSON.stringify(out)});
+  try{ const m=res.raw.match(/\{[\s\S]*\}/); out=JSON.parse(m?m[0]:res.raw); }catch{ out={reply:res.raw,better:"",why:""}; }
+  if(!out.better&&out.correction) out.why=out.why||out.correction;   // older answer shape
+  const better=(!out.unclear&&out.better&&out.better.trim().toLowerCase()!==userText.trim().toLowerCase())?out.better.trim():"";
+  if(out.unclear) history.pop(); else history.push({role:"assistant",text:JSON.stringify(out)});
   addTutor(out.reply||"");
-  if(out.correction||out.better) addTip(out.correction,out.better);
+  if(better) addFix(userText,better,out.why||"");
   addSys(`replied in ${secs}s · ${res.label}`);
   let spoken=out.reply||"";
-  if(out.better) spoken=`Small tip. We say: ${out.better}. ... ${spoken}`;
+  if(better) spoken=`A more natural way to say it: ${better}. ... ${spoken}`;
   speak(spoken,true);
 }
 
 /* ---------- Settings ---------- */
-function openSettings(){ $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); $("settings").hidden=false; }
+function openSettings(){ $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
 $("openSettings").onclick=openSettings;
 $("settings").onclick=e=>{ if(e.target.id==="settings") $("settings").hidden=true; };
 $("lang").value=store.get("lang","en-IN");
 $("rate").value=store.get("rate","0.8"); $("rateVal").textContent=$("rate").value;
-$("rate").oninput=()=>$("rateVal").textContent=$("rate").value;
+function syncSeg(id,attr,val){ [...$(id).children].forEach(b=>b.setAttribute("aria-pressed",String(b.dataset[attr]===String(val)))); }
+$("rate").oninput=()=>{ $("rateVal").textContent=$("rate").value; syncSeg("speedSeg","rate",+$("rate").value); };
+$("speedSeg").onclick=e=>{ const r=e.target.dataset?.rate; if(!r) return; $("rate").value=r; $("rate").oninput(); };
+let pendingPitch=store.get("pitch","1"), pendingPause=store.get("pause","normal");
+$("toneSeg").onclick=e=>{ const p=e.target.dataset?.pitch; if(!p) return; pendingPitch=p; syncSeg("toneSeg","pitch",p); };
+$("pauseSeg").onclick=e=>{ const p=e.target.dataset?.pause; if(!p) return; pendingPause=p; syncSeg("pauseSeg","pause",p); };
+$("preview").onclick=()=>{
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance("Hello! I'm your English tutor. How was your day at the hospital?");
+  const v=voices[+$("voice").value]; if(v){u.voice=v;u.lang=v.lang}else u.lang="en-US";
+  u.rate=+$("rate").value; u.pitch=+pendingPitch; speechSynthesis.speak(u);
+};
+syncSeg("speedSeg","rate",+$("rate").value); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause);
 $("saveSettings").onclick=()=>{
   store.set("key",$("key").value.trim());
   store.set("groq_key",$("groqKey").value.trim());
   groqModels=null; geminiModels=null; lastGood=""; store.set("last_good","");
   store.set("lang",$("lang").value); store.set("rate",$("rate").value);
+  store.set("pitch",pendingPitch); store.set("pause",pendingPause);
   const v=voices[+$("voice").value]; if(v) store.set("voice",v.name);
   $("settings").hidden=true; addSys("Settings saved.");
 };
