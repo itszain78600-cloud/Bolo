@@ -64,6 +64,9 @@ footer{border-top:1px solid var(--line);background:var(--bg);padding-top:12px;pa
   padding-top:18px;padding-bottom:max(18px,env(safe-area-inset-bottom))}
 .sheet .wrap{display:flex;flex-direction:column;gap:14px}
 .sheet h2{font:600 1.3rem var(--display);margin:0}
+.ver{font:700 .8rem var(--body);color:var(--muted);margin-left:6px}
+textarea{font:inherit;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%;resize:vertical}
+.editbtn{background:none;border:0;color:var(--accent);font:700 .8rem var(--body);padding:4px 0 0;cursor:pointer;display:block;margin-left:auto}
 .field{display:flex;flex-direction:column;gap:6px}
 .label{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700}
 input[type=password],input[type=text],select{font:inherit;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%}
@@ -104,7 +107,12 @@ input[type=range]{width:100%}
 
 <div id="settings" hidden>
   <div class="sheet"><div class="wrap">
-    <h2>Settings</h2>
+    <h2>Settings <span class="ver">version 1.2</span></h2>
+    <div class="field">
+      <label class="label" for="about">About me (optional)</label>
+      <textarea id="about" rows="3" placeholder="Example: My name is Zain. I am a nurse in Karachi. I also teach students."></textarea>
+      <p class="help">The tutor only knows what you write here and what you say. It also helps it guess words the phone mishears.</p>
+    </div>
     <div class="field">
       <label class="label" for="groqKey">Groq API key (fastest)</label>
       <input id="groqKey" type="password" placeholder="Paste your Groq key here" autocomplete="off">
@@ -183,7 +191,34 @@ function startTopic(t){
 const log=$("log");
 function scroll(){ $("chat").scrollTop=$("chat").scrollHeight; }
 function addSys(t){ const d=document.createElement("div"); d.className="sys"; d.textContent=t; log.appendChild(d); scroll(); }
-function addMe(t){ const d=document.createElement("div"); d.className="msg me"; d.textContent=t; log.appendChild(d); scroll(); }
+function addMe(t){
+  document.querySelectorAll(".msg.me .editbtn").forEach(b=>b.remove());   // only the latest message can be edited
+  const d=document.createElement("div"); d.className="msg me";
+  const span=document.createElement("span"); span.textContent=t; d.appendChild(span);
+  const e=document.createElement("button"); e.className="editbtn"; e.textContent="✏️ Edit"; e.onclick=()=>editMessage(d,t);
+  d.appendChild(e); log.appendChild(d); scroll(); return d;
+}
+// Fix what the phone heard, then ask the tutor again
+function editMessage(bubble,oldText){
+  if(busy) return;
+  speechSynthesis.cancel(); if(listening&&session){ session.stopNow=true; try{rec.abort()}catch{} }
+  bubble.innerHTML="";
+  const ta=document.createElement("textarea"); ta.rows=3; ta.value=oldText;
+  const row=document.createElement("div"); row.className="btnrow";
+  const send=document.createElement("button"); send.className="smallbtn"; send.textContent="Send";
+  const cancel=document.createElement("button"); cancel.className="smallbtn"; cancel.textContent="Cancel";
+  row.append(send,cancel); bubble.append(ta,row); ta.focus(); scroll();
+  cancel.onclick=()=>{ bubble.innerHTML=""; const s=document.createElement("span"); s.textContent=oldText; bubble.appendChild(s);
+    const e=document.createElement("button"); e.className="editbtn"; e.textContent="✏️ Edit"; e.onclick=()=>editMessage(bubble,oldText); bubble.appendChild(e); };
+  send.onclick=()=>{
+    const t=ta.value.trim(); if(!t) return;
+    const idx=+bubble.dataset.h;
+    if(!isNaN(idx)) history.length=idx;          // forget the misunderstood turn
+    while(bubble.nextSibling) bubble.nextSibling.remove();
+    bubble.remove();
+    sendToTutor(t);
+  };
+}
 function addTutor(t){
   const d=document.createElement("div"); d.className="msg tutor"; d.textContent=t;
   const r=document.createElement("button"); r.className="replay"; r.textContent="▶ Hear again"; r.onclick=()=>speak(t,false);
@@ -317,7 +352,9 @@ function askToRepeat(text){
   const again=document.createElement("button"); again.className="smallbtn"; again.textContent="Say it again";
   yes.onclick=()=>{ d.remove(); sendToTutor(text); };
   again.onclick=()=>{ d.remove(); startListening(); };
-  row.append(yes,again); d.appendChild(row); log.appendChild(d); scroll();
+  const edit=document.createElement("button"); edit.className="smallbtn"; edit.textContent="✏️ Edit";
+  edit.onclick=()=>{ d.remove(); speechSynthesis.cancel(); const b=addMe(text); b.dataset.h=String(history.length); editMessage(b,text); };
+  row.append(yes,again,edit); d.appendChild(row); log.appendChild(d); scroll();
   speak("Sorry, I didn't catch that clearly. Please say it again.",true);
 }
 
@@ -330,9 +367,11 @@ mic.onclick=()=>{
 // history items: {role:"user"|"assistant", text}
 
 function systemPrompt(){
-  return `You are Bolo, a warm, patient English speaking tutor for an adult in Pakistan with a medical (nursing) background.
+  const about=store.get("about","").trim();
+  return `You are Bolo, a warm, patient English speaking tutor for an adult learner in Pakistan.
 The learner speaks with a Pakistani accent and often mixes Urdu (in Roman script) with English.
-IMPORTANT: the learner's words come from phone speech-to-text, which often mishears accented speech (e.g. "Amo" for "I'm a", "constructor rule" for "instructor role"). Always guess the most likely intended words using context (nursing, healthcare, teaching, daily life).
+${about?`What the learner wrote about themselves in the app's Settings: "${about.replace(/"/g,"'")}". If they ask how you know something about them, say they wrote it in Settings.`:`You know nothing about the learner except what they say in this chat. Never assume their job, name or background. If they ask what you know about them, be honest.`}
+IMPORTANT: the learner's words come from phone speech-to-text, which often mishears accented speech (e.g. "Amo" for "I'm a", "constructor rule" for "instructor role"). Always guess the most likely intended words using the conversation and what the learner wrote about themselves (for example "Earth" may be "nurse", "dinner Singh" may be "nursing").
 - If a word looks misheard, do NOT treat it as the learner's mistake and do NOT correct it. If one word is unclear, briefly ask "Did you mean ...?" inside "reply".
 - If the whole message is too garbled to understand, do NOT invent a meaning: set "unclear" to true and in "reply" kindly ask them to say it again.
 - Only correct real grammar or word-choice mistakes that would still be wrong with the intended words.
@@ -343,6 +382,7 @@ Rules:
 - If the learner made a real grammar or word-choice mistake, or used Urdu words: put their whole sentence rewritten in natural American English in "better", and ONE short, simple reason in "why" (max 12 words, kind tone, e.g. "Use past tense 'went' for yesterday.").
 - Ignore capitalization, punctuation and tiny slips that don't matter when speaking.
 - If the sentence was fine, set "better" and "why" to empty strings and praise naturally inside "reply" now and then.
+- If the learner says you misunderstood them, apologize in one short sentence, say the phone sometimes mishears accents, and ask them to say it again slowly or tap Edit to fix the text. Never deny something you said earlier in this chat.
 - Never use Urdu in your reply. Never lecture. Never use lists, emojis or markdown.
 Answer ONLY as JSON: {"reply": string, "better": string, "why": string, "unclear": boolean}`;
 }
@@ -446,7 +486,7 @@ async function askBrain(){
 }
 
 async function sendToTutor(userText){
-  addMe(userText);
+  const bubble=addMe(userText); bubble.dataset.h=String(history.length);
   if(!store.get("groq_key","")&&!store.get("key","")){ addSys("Add a free Groq or Gemini key in Settings first."); openSettings(); return; }
   history.push({role:"user",text:userText});
   busy=true; mic.disabled=true; setStatus("Tutor is thinking…");
@@ -475,7 +515,7 @@ async function sendToTutor(userText){
 }
 
 /* ---------- Settings ---------- */
-function openSettings(){ $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
+function openSettings(){ $("about").value=store.get("about",""); $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
 $("openSettings").onclick=openSettings;
 $("settings").onclick=e=>{ if(e.target.id==="settings") $("settings").hidden=true; };
 $("lang").value=store.get("lang","en-IN");
@@ -496,6 +536,7 @@ syncSeg("speedSeg","rate",+$("rate").value); syncSeg("toneSeg","pitch",pendingPi
 $("saveSettings").onclick=()=>{
   store.set("key",$("key").value.trim());
   store.set("groq_key",$("groqKey").value.trim());
+  store.set("about",$("about").value.trim());
   groqModels=null; geminiModels=null; lastGood=""; store.set("last_good","");
   store.set("lang",$("lang").value); store.set("rate",$("rate").value);
   store.set("pitch",pendingPitch); store.set("pause",pendingPause);
