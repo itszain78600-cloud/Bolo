@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Bolo Mic Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+/* Layout: one calm column, a big mic button at the centre, what-it-heard card below */
+:root{
+  --bg:#f3f6f4; --surface:#ffffff; --fg:#17251f; --muted:#5d6e66;
+  --accent:#1f7a5a; --accent-ink:#ffffff; --live:#c2412d; --line:#d7e1dc;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1714; --surface:#17221d; --fg:#e6efe9; --muted:#9bb0a6;
+  --accent:#4cc495; --accent-ink:#06140e; --live:#ff7a62; --line:#2a3a33; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:16px/1.5 var(--body);
+  padding-block:max(20px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-bottom));
+  padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
+main{max-width:480px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+h1{font:600 1.9rem/1.1 var(--display);margin:0;text-wrap:balance}
+.sub{color:var(--muted);margin:4px 0 0}
+.step{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);font-weight:700}
+.micwrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0}
+#mic{width:132px;height:132px;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);
+  display:grid;place-items:center;cursor:pointer;box-shadow:0 8px 24px rgb(0 0 0 / .15);transition:transform .15s}
+#mic:active{transform:scale(.96)}
+#mic:focus-visible{outline:3px solid var(--fg);outline-offset:4px}
+#mic.on{background:var(--live);animation:pulse 1.4s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgb(194 65 45 / .45)}100%{box-shadow:0 0 0 26px rgb(194 65 45 / 0)}}
+@media (prefers-reduced-motion:reduce){#mic.on{animation:none}}
+#status{font-weight:700;min-height:1.5em;text-align:center}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.label{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700}
+#heard{font-size:1.25rem;min-height:2em;word-wrap:break-word}
+#heard .interim{color:var(--muted)}
+#conf{font-size:.85rem;color:var(--muted)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button.sec{font:700 1rem var(--body);padding:12px 16px;border-radius:10px;border:1px solid var(--line);
+  background:var(--surface);color:var(--fg);cursor:pointer;flex:1}
+button.sec:disabled{opacity:.45}
+select,input[type=range]{font:inherit;width:100%}
+select{padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+.field{display:flex;flex-direction:column;gap:6px}
+#err{background:color-mix(in srgb,var(--live) 14%,var(--surface));border:1px solid var(--live);border-radius:12px;padding:12px}
+.tip{color:var(--muted);font-size:.9rem}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="step">Step 1 · Microphone</div>
+    <h1>Bolo Mic Test</h1>
+    <p class="sub">Tap the button, say a sentence in English or mixed Urdu-English, then tap again to stop.</p>
+  </header>
+
+  <div id="err" hidden></div>
+
+  <div class="micwrap">
+    <button id="mic" aria-label="Start listening">
+      <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor"></rect>
+        <path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"></path>
+      </svg>
+    </button>
+    <div id="status">Tap to speak</div>
+  </div>
+
+  <section class="card">
+    <div class="label">What I heard</div>
+    <div id="heard"><span class="interim">Example: "Aaj main hospital gaya and my shift was very busy."</span></div>
+    <div id="conf"></div>
+    <div class="row">
+      <button class="sec" id="speak" disabled>Read it back</button>
+      <button class="sec" id="clear" disabled>Clear</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="field">
+      <label class="label" for="lang">Listening mode</label>
+      <select id="lang">
+        <option value="en-IN" selected>English (South Asian accent) · best for you</option>
+        <option value="en-PK">English (Pakistan)</option>
+        <option value="en-US">English (American)</option>
+        <option value="ur-PK">Urdu</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="label" for="rate">Speaking speed: <span id="rateVal">0.8</span>x</label>
+      <input id="rate" type="range" min="0.5" max="1.2" step="0.05" value="0.8">
+    </div>
+    <div class="field">
+      <label class="label" for="voice">Voice</label>
+      <select id="voice"><option>Loading voices…</option></select>
+    </div>
+  </section>
+
+  <p class="tip">Tip: if Chrome asks to use your microphone, tap <b>Allow</b>. Try the same sentence in each listening mode and see which one understands you best.</p>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const mic=$("mic"), statusEl=$("status"), heard=$("heard"), conf=$("conf"),
+      speakBtn=$("speak"), clearBtn=$("clear"), errBox=$("err"),
+      langSel=$("lang"), rate=$("rate"), rateVal=$("rateVal"), voiceSel=$("voice");
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec=null, listening=false, finalText="";
+
+function showError(msg){ errBox.innerHTML=msg; errBox.hidden=false; }
+function hideError(){ errBox.hidden=true; }
+
+if(!SR){
+  showError("<b>Speech recognition isn't available here.</b> Open this page in the Google Chrome app on your Android phone.");
+  mic.disabled=true;
+}
+if(!window.isSecureContext){
+  showError("<b>The microphone needs a secure (https) link.</b> Open this page from its https:// web address, not as a downloaded file.");
+}
+
+// Pick a slow, clear American English voice
+let voices=[];
+function loadVoices(){
+  voices = speechSynthesis.getVoices().filter(v=>v.lang && v.lang.toLowerCase().startsWith("en"));
+  if(!voices.length) return;
+  const score = v => (v.lang==="en-US"?10:0) + (/google/i.test(v.name)?5:0) + (v.localService?1:0);
+  voices.sort((a,b)=>score(b)-score(a));
+  voiceSel.innerHTML = voices.map((v,i)=>`<option value="${i}">${v.name} (${v.lang})</option>`).join("");
+}
+if("speechSynthesis" in window){
+  loadVoices();
+  speechSynthesis.onvoiceschanged = loadVoices;
+} else {
+  voiceSel.innerHTML="<option>No voices on this device</option>";
+}
+
+rate.addEventListener("input",()=> rateVal.textContent = (+rate.value).toFixed(2).replace(/0$/,""));
+
+function speak(text){
+  if(!("speechSynthesis" in window) || !text) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  const v = voices[+voiceSel.value];
+  if(v){ u.voice=v; u.lang=v.lang; } else u.lang="en-US";
+  u.rate = +rate.value; u.pitch = 1;
+  u.onstart=()=> statusEl.textContent="Speaking…";
+  u.onend=()=> statusEl.textContent="Tap to speak";
+  speechSynthesis.speak(u);
+}
+
+function start(){
+  hideError();
+  speechSynthesis && speechSynthesis.cancel();
+  rec = new SR();
+  rec.lang = langSel.value;
+  rec.interimResults = true;
+  rec.continuous = false;      // more reliable on Android
+  rec.maxAlternatives = 1;
+  finalText="";
+
+  rec.onstart=()=>{ listening=true; mic.classList.add("on"); mic.setAttribute("aria-label","Stop listening");
+    statusEl.textContent="Listening… speak now"; heard.innerHTML='<span class="interim">…</span>'; conf.textContent=""; };
+
+  rec.onresult=e=>{
+    let interim="", c=null;
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const r=e.results[i];
+      if(r.isFinal){ finalText += r[0].transcript; c=r[0].confidence; }
+      else interim += r[0].transcript;
+    }
+    heard.innerHTML = escapeHtml(finalText) + (interim?` <span class="interim">${escapeHtml(interim)}</span>`:"");
+    if(c) conf.textContent = `Confidence: ${Math.round(c*100)}%`;
+  };
+
+  rec.onerror=e=>{
+    const msgs={
+      "not-allowed":"<b>Microphone blocked.</b> Tap the lock icon next to the web address → Permissions → Microphone → Allow, then reload.",
+      "service-not-allowed":"<b>Microphone blocked.</b> Tap the lock icon next to the web address → Permissions → Microphone → Allow, then reload.",
+      "no-speech":"<b>I didn't hear anything.</b> Hold the phone closer and start speaking right after you tap.",
+      "audio-capture":"<b>No microphone found.</b> Check that no other app is using the mic.",
+      "network":"<b>No internet.</b> Chrome's speech recognition needs a connection.",
+      "language-not-supported":"<b>That listening mode isn't supported.</b> Choose another one below."
+    };
+    if(e.error!=="aborted") showError(msgs[e.error] || `Something went wrong (${e.error}). Tap the mic to try again.`);
+  };
+
+  rec.onend=()=>{
+    listening=false; mic.classList.remove("on"); mic.setAttribute("aria-label","Start listening");
+    const t=finalText.trim();
+    if(t){ heard.textContent=t; speakBtn.disabled=false; clearBtn.disabled=false; statusEl.textContent="Got it! Reading it back…"; speak(t); }
+    else if(statusEl.textContent.startsWith("Listening")) statusEl.textContent="Tap to speak";
+  };
+
+  try{ rec.start(); } catch(err){ showError("Couldn't start the microphone. Tap again."); }
+}
+
+mic.addEventListener("click",()=> listening ? rec.stop() : start());
+speakBtn.addEventListener("click",()=> speak(heard.textContent.trim()));
+clearBtn.addEventListener("click",()=>{ heard.innerHTML='<span class="interim">Tap the mic to try again.</span>'; conf.textContent=""; speakBtn.disabled=clearBtn.disabled=true; });
+
+function escapeHtml(s){ return s.replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch])); }
+</script>
+</body>
+</html>
