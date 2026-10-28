@@ -107,7 +107,7 @@ input[type=range]{width:100%}
 
 <div id="settings" hidden>
   <div class="sheet"><div class="wrap">
-    <h2>Settings <span class="ver">version 1.2</span></h2>
+    <h2>Settings <span class="ver">version 1.3</span></h2>
     <div class="field">
       <label class="label" for="about">About me (optional)</label>
       <textarea id="about" rows="3" placeholder="Example: My name is Zain. I am a nurse in Karachi. I also teach students."></textarea>
@@ -124,7 +124,12 @@ input[type=range]{width:100%}
       <p class="help">Get a free key at aistudio.google.com → Get API key. It is saved only on this phone and never shared.</p>
     </div>
     <div class="field">
-      <label class="label" for="lang">Listening mode</label>
+      <span class="label">Listener</span>
+      <div class="seg" id="engineSeg"><button data-engine="whisper">Whisper (more accurate)</button><button data-engine="google">Google (live text)</button></div>
+      <p class="help">Whisper understands accents and Urdu-English better, and shows your words after you finish. Free with your Groq key, about 2,000 uses a day. Google shows words while you speak.</p>
+    </div>
+    <div class="field">
+      <label class="label" for="lang">Google listening mode</label>
       <select id="lang">
         <option value="en-IN">English (South Asian accent)</option>
         <option value="en-PK">English (Pakistan)</option>
@@ -281,17 +286,18 @@ const pauseMs=()=>PAUSES[store.get("pause","normal")]||2000;
 const LOW_CONF=0.55; // below this, the phone was unsure what it heard
 
 function startListening(){
+  if(store.get("engine","google")==="whisper") return startWhisper();
   if(!SR){ addSys("Speech recognition needs the Chrome app on Android."); return; }
   if(busy||listening) return;
   speechSynthesis.cancel();
-  session={segments:[],confs:[],draft:null,lastError:"",stopNow:false};
+  session={segments:[],segAlts:[],confs:[],draft:null,lastError:"",stopNow:false};
   listening=true; mic.classList.add("on"); mic.setAttribute("aria-label","Stop and send");
   runRound(session);
 }
 
 function runRound(s){
-  rec=new SR(); rec.lang=$("lang").value; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
-  let finalText="", interim="", waitTimer=null;
+  rec=new SR(); rec.lang=$("lang").value; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=3;
+  let finalText="", interim="", waitTimer=null, roundAlts=[];
   const showDraft=()=>{
     if(!s.draft){ s.draft=document.createElement("div"); s.draft.className="msg me"; s.draft.style.opacity=".6"; log.appendChild(s.draft); }
     s.draft.textContent=[...s.segments,(finalText+interim).trim()].join(" ").trim(); scroll();
@@ -306,7 +312,8 @@ function runRound(s){
     clearTimeout(waitTimer); interim="";
     for(let i=e.resultIndex;i<e.results.length;i++){
       const r=e.results[i];
-      if(r.isFinal){ finalText+=r[0].transcript; if(r[0].confidence>0) s.confs.push(r[0].confidence); }
+      if(r.isFinal){ finalText+=r[0].transcript; if(r[0].confidence>0) s.confs.push(r[0].confidence);
+        roundAlts.push([...Array(r.length)].map((_,k)=>r[k].transcript)); }
       else interim+=r[0].transcript;
     }
     showDraft();
@@ -316,7 +323,9 @@ function runRound(s){
     clearTimeout(waitTimer);
     if(session!==s) return;
     const t=(finalText||interim).trim();
-    if(t) s.segments.push(t);
+    if(t){ s.segments.push(t);
+      const alts=[0,1,2].map(k=>roundAlts.length?roundAlts.map(a=>a[k]??a[0]).join(" ").trim():t);
+      s.segAlts.push(alts); }
     if(s.stopNow||!t||s.lastError==="not-allowed"||s.lastError==="network") finishListening(s);
     else runRound(s);   // you said something: listen for more
   };
@@ -338,19 +347,23 @@ function finishListening(s){
     misses=0; setStatus("Tap the mic and speak"); return;
   }
   misses=0;
+  // the phone's other guesses for the same words: the tutor picks the one that makes sense
+  const norm=x=>x.replace(/\s+/g," ").trim().toLowerCase();
+  const alts=[1,2].map(k=>s.segAlts.map(a=>a[k]||a[0]).join(" ").replace(/\s+/g," ").trim())
+    .filter((a,i,arr)=>a&&norm(a)!==norm(text)&&arr.findIndex(b=>norm(b)===norm(a))===i);
   const avg=s.confs.length?s.confs.reduce((a,b)=>a+b,0)/s.confs.length:1;
-  if(avg<LOW_CONF) askToRepeat(text); else sendToTutor(text);
+  if(avg<LOW_CONF) askToRepeat(text,alts); else sendToTutor(text,alts);
 }
 
 // The phone wasn't sure: show what it heard and ask, instead of guessing
-function askToRepeat(text){
+function askToRepeat(text,alts=[]){
   const d=document.createElement("div"); d.className="tip";
   const b=document.createElement("b"); b.textContent="Did I hear you right?"; d.appendChild(b);
   const q=document.createElement("div"); q.textContent="“"+text+"”"; d.appendChild(q);
   const row=document.createElement("div"); row.className="btnrow";
   const yes=document.createElement("button"); yes.className="smallbtn"; yes.textContent="Yes, send";
   const again=document.createElement("button"); again.className="smallbtn"; again.textContent="Say it again";
-  yes.onclick=()=>{ d.remove(); sendToTutor(text); };
+  yes.onclick=()=>{ d.remove(); sendToTutor(text,alts); };
   again.onclick=()=>{ d.remove(); startListening(); };
   const edit=document.createElement("button"); edit.className="smallbtn"; edit.textContent="✏️ Edit";
   edit.onclick=()=>{ d.remove(); speechSynthesis.cancel(); const b=addMe(text); b.dataset.h=String(history.length); editMessage(b,text); };
@@ -360,8 +373,83 @@ function askToRepeat(text){
 
 mic.onclick=()=>{
   if(listening&&session){ session.stopNow=true; try{rec.stop()}catch{} }
+  else if(listening&&wsession){ wsession.finish(); }
   else startListening();
 };
+
+/* ---------- Whisper listener (Groq, free) ---------- */
+// Records your voice, stops when you go quiet, then sends the audio to Whisper,
+// which is trained on many accents and on Urdu. Needs the Groq key.
+let wsession=null;
+async function startWhisper(){
+  if(busy||listening) return;
+  const key=store.get("groq_key","");
+  if(!key){ addSys("Whisper needs your free Groq key. Add it in Settings."); openSettings(); return; }
+  if(!navigator.mediaDevices||!window.MediaRecorder){ addSys("This browser can't record audio. Switch the listener to Google in Settings."); return; }
+  speechSynthesis.cancel();
+  listening=true; mic.classList.add("on"); mic.setAttribute("aria-label","Stop and send");
+  setStatus("Listening… speak now");
+  let stream;
+  try{ stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}); }
+  catch(e){ listening=false; mic.classList.remove("on");
+    addSys("Microphone blocked. Tap the icon left of the web address → Permissions → Microphone → Allow."); setStatus("Tap the mic and speak"); return; }
+  const mime=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(m=>MediaRecorder.isTypeSupported?.(m))||"";
+  const mr=new MediaRecorder(stream,mime?{mimeType:mime}:undefined);
+  const chunks=[]; mr.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
+  const ctx=new (window.AudioContext||window.webkitAudioContext)();
+  const src=ctx.createMediaStreamSource(stream); const an=ctx.createAnalyser(); an.fftSize=1024; src.connect(an);
+  const buf=new Float32Array(an.fftSize);
+  const t0=performance.now(); let floor=0.01, heard=false, lastLoud=0, done=false;
+  const s={finish:()=>{ if(done) return; done=true; clearInterval(timer); try{mr.stop()}catch{} }};
+  wsession=s;
+  const timer=setInterval(()=>{
+    an.getFloatTimeDomainData(buf); let sum=0; for(const v of buf) sum+=v*v; const rms=Math.sqrt(sum/buf.length);
+    const now=performance.now();
+    if(now-t0<400){ floor=Math.max(floor*0.8+rms*0.2,0.005); return; }      // learn the room's noise level
+    if(rms>Math.max(0.02,floor*3)){ heard=true; lastLoud=now; setStatus("Listening…"); }
+    else if(heard&&now-lastLoud>pauseMs()) s.finish();                        // you paused long enough
+    else if(heard&&now-lastLoud>600) setStatus("Keep talking… or pause to send");
+    if(!heard&&now-t0>8000) s.finish();                                        // nothing said
+    if(now-t0>45000) s.finish();                                               // safety limit
+  },100);
+  mr.onstop=async()=>{
+    stream.getTracks().forEach(t=>t.stop()); ctx.close?.();
+    wsession=null; listening=false; mic.classList.remove("on"); mic.setAttribute("aria-label","Start speaking");
+    if(!heard){
+      if($("auto").checked && ++misses<2){ setStatus("I'm listening…"); setTimeout(startListening,300); return; }
+      misses=0; addSys("I didn't hear anything. Tap the mic when you're ready."); setStatus("Tap the mic and speak"); return;
+    }
+    misses=0; busy=true; mic.disabled=true; setStatus("Writing down your words…");
+    let r=null;
+    try{ r=await whisperTranscribe(new Blob(chunks,{type:mr.mimeType||"audio/webm"}),key); }
+    catch(e){ addSys(e.status===401?"Your Groq key didn't work for Whisper. Check it in Settings.":
+                     e.status===429?"Whisper's free limit is reached for now. Switch to Google in Settings, or wait a bit.":
+                     "Whisper couldn't hear that ("+e.message+"). Tap the mic and try again."); }
+    busy=false; mic.disabled=false;
+    if(!r||!r.text){ if(r) addSys("I didn't catch any words. Tap the mic and try again."); setStatus("Tap the mic and speak"); return; }
+    if(r.unsure) askToRepeat(r.text); else sendToTutor(r.text);
+  };
+  mr.start(250);
+}
+
+async function whisperTranscribe(blob,key){
+  const ext=/mp4/.test(blob.type)?"m4a":/ogg/.test(blob.type)?"ogg":"webm";
+  const about=store.get("about","").slice(0,300);
+  const fd=new FormData();
+  fd.append("file",blob,"speech."+ext);
+  fd.append("model","whisper-large-v3");
+  fd.append("language","en");
+  fd.append("response_format","verbose_json");
+  fd.append("temperature","0");
+  fd.append("prompt",(about?about+" ":"")+"Pakistani English speaker, sometimes mixing Roman Urdu words like acha, theek hai, yaar.");
+  const res=await fetchT("https://api.groq.com/openai/v1/audio/transcriptions",{method:"POST",headers:{Authorization:"Bearer "+key},body:fd},20000);
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok) throw httpErr(res,data);
+  const segs=(data.segments||[]).filter(sg=>!(sg.no_speech_prob>0.6&&sg.avg_logprob<-0.7));   // drop silence "hallucinations"
+  const text=(data.segments?segs.map(sg=>sg.text).join(" "):data.text||"").replace(/\s+/g," ").trim();
+  const lp=segs.length?segs.reduce((a,sg)=>a+(sg.avg_logprob??0),0)/segs.length:0;
+  return {text,unsure:segs.length>0&&lp<-1.0};
+}
 
 /* ---------- Tutor brain: Groq first (fast), Gemini as backup ---------- */
 // history items: {role:"user"|"assistant", text}
@@ -373,18 +461,21 @@ The learner speaks with a Pakistani accent and often mixes Urdu (in Roman script
 ${about?`What the learner wrote about themselves in the app's Settings: "${about.replace(/"/g,"'")}". If they ask how you know something about them, say they wrote it in Settings.`:`You know nothing about the learner except what they say in this chat. Never assume their job, name or background. If they ask what you know about them, be honest.`}
 IMPORTANT: the learner's words come from phone speech-to-text, which often mishears accented speech (e.g. "Amo" for "I'm a", "constructor rule" for "instructor role"). Always guess the most likely intended words using the conversation and what the learner wrote about themselves (for example "Earth" may be "nurse", "dinner Singh" may be "nursing").
 - If a word looks misheard, do NOT treat it as the learner's mistake and do NOT correct it. If one word is unclear, briefly ask "Did you mean ...?" inside "reply".
+- Sometimes the learner's message ends with [speech-to-text other guesses: ...]. These are other ways the phone heard the same words. Choose whichever version makes the most sense in the conversation.
+- Put your best understanding of what the learner actually said in "heard": fix speech-to-text errors (wrong names, similar-sounding words), but KEEP the learner's own grammar mistakes.
 - If the whole message is too garbled to understand, do NOT invent a meaning: set "unclear" to true and in "reply" kindly ask them to say it again.
 - Only correct real grammar or word-choice mistakes that would still be wrong with the intended words.
 Current practice topic: ${topic.name}.
 Rules:
 - Reply in simple, clear, natural English (American or neutral). Keep "reply" short: 1-2 short sentences, then ONE easy follow-up question to keep the conversation going.
 - First understand what the learner MEANS, then respond to that meaning.
-- If the learner made a real grammar or word-choice mistake, or used Urdu words: put their whole sentence rewritten in natural American English in "better", and ONE short, simple reason in "why" (max 12 words, kind tone, e.g. "Use past tense 'went' for yesterday.").
+- Fill "better" ONLY for a real English mistake in "heard": grammar, tense, word order, wrong word choice, missing small words, or Urdu words used instead of English. Then "better" is the whole sentence in natural American English, and "why" is ONE short English rule in simple words (max 12 words, e.g. "Use past tense 'went' for yesterday.").
+- NEVER fill "better" for names, the spelling of names, speech-to-text errors, or correcting a misunderstanding. "why" must always explain an English rule, never the conversation.
 - Ignore capitalization, punctuation and tiny slips that don't matter when speaking.
 - If the sentence was fine, set "better" and "why" to empty strings and praise naturally inside "reply" now and then.
 - If the learner says you misunderstood them, apologize in one short sentence, say the phone sometimes mishears accents, and ask them to say it again slowly or tap Edit to fix the text. Never deny something you said earlier in this chat.
 - Never use Urdu in your reply. Never lecture. Never use lists, emojis or markdown.
-Answer ONLY as JSON: {"reply": string, "better": string, "why": string, "unclear": boolean}`;
+Answer ONLY as JSON: {"heard": string, "reply": string, "better": string, "why": string, "unclear": boolean}`;
 }
 
 // fetch with a time limit, so one stuck model never blocks the conversation
@@ -398,7 +489,7 @@ function httpErr(res,data){ const e=new Error(data?.error?.message||("HTTP "+res
 const isKeyErr=e=>e.status===401||e.status===403||(e.status===400&&/api.?key/i.test(e.message));
 
 /* --- Groq (OpenAI-style API) --- */
-const GROQ_PREF=["openai/gpt-oss-20b","qwen/qwen3.8-27b","openai/gpt-oss-120b","llama-3.1-8b-instant","llama-3.3-70b-versatile"];
+const GROQ_PREF=["openai/gpt-oss-120b","openai/gpt-oss-20b","qwen/qwen3.8-27b","llama-3.1-8b-instant","llama-3.3-70b-versatile"];
 let groqModels=null;
 const groqLite=new Set(JSON.parse(store.get("groq_lite","[]")||"[]")); // models that refused extra options
 
@@ -466,7 +557,7 @@ async function callGemini(model,key){
 }
 
 /* --- try every option in order, fastest first; remember what worked --- */
-let lastGood=store.get("last_good",""); // "provider|model"
+let lastGood=store.get("last_good_v13",""); // "provider|model"
 async function askBrain(){
   const gKey=store.get("groq_key",""), mKey=store.get("key","");
   const plan=[];
@@ -478,17 +569,17 @@ async function askBrain(){
     if(badProvider.has(prov)) continue;
     try{
       const raw=prov==="Groq"?await callGroq(model,gKey):await callGemini(model,mKey);
-      lastGood=prov+"|"+model; store.set("last_good",lastGood);
+      lastGood=prov+"|"+model; store.set("last_good_v13",lastGood);
       return {raw,label:prov+" · "+model};
     }catch(e){ lastErr=e; e.provider=prov; if(isKeyErr(e)) badProvider.add(prov); }
   }
   throw lastErr||new Error("no brain");
 }
 
-async function sendToTutor(userText){
+async function sendToTutor(userText,alts=[]){
   const bubble=addMe(userText); bubble.dataset.h=String(history.length);
   if(!store.get("groq_key","")&&!store.get("key","")){ addSys("Add a free Groq or Gemini key in Settings first."); openSettings(); return; }
-  history.push({role:"user",text:userText});
+  history.push({role:"user",text:alts.length?`${userText}\n[speech-to-text other guesses: ${alts.map(a=>'"'+a+'"').join(" | ")}]`:userText});
   busy=true; mic.disabled=true; setStatus("Tutor is thinking…");
   const t0=performance.now(); let res=null, err=null;
   try{ res=await askBrain(); }catch(e){ err=e; }
@@ -504,10 +595,11 @@ async function sendToTutor(userText){
   let out;
   try{ const m=res.raw.match(/\{[\s\S]*\}/); out=JSON.parse(m?m[0]:res.raw); }catch{ out={reply:res.raw,better:"",why:""}; }
   if(!out.better&&out.correction) out.why=out.why||out.correction;   // older answer shape
-  const better=(!out.unclear&&out.better&&out.better.trim().toLowerCase()!==userText.trim().toLowerCase())?out.better.trim():"";
+  const said=(out.heard||userText).trim().toLowerCase().replace(/[.,!?]/g,"");
+  const better=(!out.unclear&&out.better&&out.better.trim().toLowerCase().replace(/[.,!?]/g,"")!==said)?out.better.trim():"";
   if(out.unclear) history.pop(); else history.push({role:"assistant",text:JSON.stringify(out)});
   addTutor(out.reply||"");
-  if(better) addFix(userText,better,out.why||"");
+  if(better) addFix((out.heard||userText).trim(),better,out.why||"");
   addSys(`replied in ${secs}s · ${res.label}`);
   let spoken=out.reply||"";
   if(better) spoken=`A more natural way to say it: ${better}. ... ${spoken}`;
@@ -515,7 +607,7 @@ async function sendToTutor(userText){
 }
 
 /* ---------- Settings ---------- */
-function openSettings(){ $("about").value=store.get("about",""); $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
+function openSettings(){ $("about").value=store.get("about",""); $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); pendingEngine=store.get("engine","google"); syncSeg("engineSeg","engine",pendingEngine); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
 $("openSettings").onclick=openSettings;
 $("settings").onclick=e=>{ if(e.target.id==="settings") $("settings").hidden=true; };
 $("lang").value=store.get("lang","en-IN");
@@ -523,7 +615,8 @@ $("rate").value=store.get("rate","0.8"); $("rateVal").textContent=$("rate").valu
 function syncSeg(id,attr,val){ [...$(id).children].forEach(b=>b.setAttribute("aria-pressed",String(b.dataset[attr]===String(val)))); }
 $("rate").oninput=()=>{ $("rateVal").textContent=$("rate").value; syncSeg("speedSeg","rate",+$("rate").value); };
 $("speedSeg").onclick=e=>{ const r=e.target.dataset?.rate; if(!r) return; $("rate").value=r; $("rate").oninput(); };
-let pendingPitch=store.get("pitch","1"), pendingPause=store.get("pause","normal");
+let pendingPitch=store.get("pitch","1"), pendingPause=store.get("pause","normal"), pendingEngine=store.get("engine","google");
+$("engineSeg").onclick=e=>{ const v=e.target.dataset?.engine; if(!v) return; pendingEngine=v; syncSeg("engineSeg","engine",v); };
 $("toneSeg").onclick=e=>{ const p=e.target.dataset?.pitch; if(!p) return; pendingPitch=p; syncSeg("toneSeg","pitch",p); };
 $("pauseSeg").onclick=e=>{ const p=e.target.dataset?.pause; if(!p) return; pendingPause=p; syncSeg("pauseSeg","pause",p); };
 $("preview").onclick=()=>{
@@ -532,14 +625,14 @@ $("preview").onclick=()=>{
   const v=voices[+$("voice").value]; if(v){u.voice=v;u.lang=v.lang}else u.lang="en-US";
   u.rate=+$("rate").value; u.pitch=+pendingPitch; speechSynthesis.speak(u);
 };
-syncSeg("speedSeg","rate",+$("rate").value); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause);
+syncSeg("engineSeg","engine",pendingEngine); syncSeg("speedSeg","rate",+$("rate").value); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause);
 $("saveSettings").onclick=()=>{
   store.set("key",$("key").value.trim());
   store.set("groq_key",$("groqKey").value.trim());
   store.set("about",$("about").value.trim());
-  groqModels=null; geminiModels=null; lastGood=""; store.set("last_good","");
+  groqModels=null; geminiModels=null; lastGood=""; store.set("last_good_v13","");
   store.set("lang",$("lang").value); store.set("rate",$("rate").value);
-  store.set("pitch",pendingPitch); store.set("pause",pendingPause);
+  store.set("pitch",pendingPitch); store.set("pause",pendingPause); store.set("engine",pendingEngine);
   const v=voices[+$("voice").value]; if(v) store.set("voice",v.name);
   $("settings").hidden=true; addSys("Settings saved.");
 };
