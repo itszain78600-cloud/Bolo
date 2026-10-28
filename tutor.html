@@ -73,6 +73,16 @@ footer{border-top:1px solid var(--line);background:var(--bg);padding-top:12px;pa
 .hit{color:var(--accent);font-weight:700}
 .miss{color:var(--live);font-weight:700;text-decoration:underline wavy}
 .psum{font-weight:700;margin:0}
+.goal{text-align:center;color:var(--muted);font-size:.8rem;margin-top:2px}
+.prog{display:flex;flex-direction:column;gap:10px}
+.prog h3{font:600 1.05rem var(--display);margin:8px 0 0}
+.prog p{margin:0}
+.week{display:flex;gap:6px;align-items:flex-end;height:110px;padding-top:4px}
+.day{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:3px;font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.day .bar{width:100%;max-width:28px;min-height:3px;border-radius:6px 6px 2px 2px;background:var(--line)}
+.day .bar.done{background:var(--accent)}
+.phrase{border-color:var(--accent)}
+.iconbtn{padding:8px 10px}
 .sheet h2{font:600 1.3rem var(--display);margin:0}
 .ver{font:700 .8rem var(--body);color:var(--muted);margin-left:6px}
 textarea{font:inherit;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%;resize:vertical}
@@ -91,7 +101,7 @@ input[type=range]{width:100%}
   <div class="wrap">
     <div class="top">
       <h1>Bolo</h1>
-      <div class="row2"><button class="iconbtn" id="openPractice">🗣 Pronounce</button><button class="iconbtn" id="openSettings">Settings</button></div>
+      <div class="row2"><button class="iconbtn" id="openPractice">Pronounce</button><button class="iconbtn" id="openProgress">Progress</button><button class="iconbtn" id="openSettings">Settings</button></div>
     </div>
     <div class="chips" id="chips" role="group" aria-label="Topics"></div>
   </div>
@@ -112,6 +122,7 @@ input[type=range]{width:100%}
       <button class="iconbtn" id="stopTalk">Stop voice</button>
     </div>
     <div id="status">Tap the mic and speak</div>
+    <div id="goalLine" class="goal"></div>
   </div>
 </footer>
 
@@ -128,9 +139,23 @@ input[type=range]{width:100%}
   </div></div>
 </div>
 
+<div id="progress" class="overlay" hidden>
+  <div class="sheet"><div class="wrap">
+    <div class="top"><h2>My progress</h2><button class="iconbtn" id="progClose">Close</button></div>
+    <div id="progBody" class="prog"></div>
+  </div></div>
+</div>
+
+<div id="quiz" class="overlay" hidden>
+  <div class="sheet"><div class="wrap">
+    <div class="top"><h2>Mini quiz</h2><button class="iconbtn" id="quizClose">Close</button></div>
+    <div id="quizBody" class="prog"></div>
+  </div></div>
+</div>
+
 <div id="settings" class="overlay" hidden>
   <div class="sheet"><div class="wrap">
-    <h2>Settings <span class="ver">version 1.4</span></h2>
+    <h2>Settings <span class="ver">version 1.5</span></h2>
     <div class="field">
       <label class="label" for="about">About me (optional)</label>
       <textarea id="about" rows="3" placeholder="Example: My name is Zain. I am a nurse in Karachi. I also teach students."></textarea>
@@ -145,6 +170,17 @@ input[type=range]{width:100%}
       <label class="label" for="key">Gemini API key (backup)</label>
       <input id="key" type="password" placeholder="Paste your key here" autocomplete="off">
       <p class="help">Get a free key at aistudio.google.com → Get API key. It is saved only on this phone and never shared.</p>
+    </div>
+    <div class="field">
+      <label class="label" for="level">My level</label>
+      <select id="level">
+        <option value="auto">Auto (estimate from my speaking)</option>
+        <option>Beginner</option><option>Elementary</option><option>Intermediate</option><option>Advanced</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="label" for="goal">Daily speaking goal</label>
+      <select id="goal"><option value="5">5 replies a day</option><option value="10">10 replies a day</option><option value="20">20 replies a day</option><option value="30">30 replies a day</option></select>
     </div>
     <div class="field">
       <span class="label">Listener</span>
@@ -190,13 +226,19 @@ const store={get(k,d){try{const v=localStorage.getItem("bolo_"+k);return v===nul
 
 /* ---------- Topics ---------- */
 const TOPICS=[
-  {id:"intro",name:"Introduce yourself",open:"Hi! I'm your English practice partner. Let's start simple. Can you tell me a little about yourself?"},
-  {id:"shift",name:"Hospital shift",open:"Let's talk about work. How was your last shift at the hospital?"},
+  {id:"intro",name:"Introductions",open:"Hi! I'm your English practice partner. Let's start simple. Can you tell me a little about yourself?"},
   {id:"routine",name:"Daily routine",open:"Tell me about your day. What did you do this morning?"},
-  {id:"shopping",name:"Shopping",open:"Imagine we are at a shop. What do you want to buy today?"},
-  {id:"patient",name:"Talking to a patient",open:"Let's practise. I am your patient. I just arrived in the ward. Please greet me and ask how I feel."},
-  {id:"free",name:"Free talk",open:"Let's just chat! What's on your mind today?"}
+  {id:"free",name:"Free talk",open:"Let's just chat! What's on your mind today?"},
+  {id:"shift",name:"Hospital shift",open:"Let's talk about work. How was your last shift at the hospital?"},
+  {id:"patient",name:"Role-play: patient",role:"a patient who just arrived in a hospital ward, a little worried; the learner is the nurse",open:"Hello… I just came to the ward. I'm a bit nervous. Can you help me?"},
+  {id:"shopping",name:"Role-play: shopping",role:"a friendly shopkeeper in a clothes shop; the learner is the customer",open:"Hi, welcome to our shop! What are you looking for today?"},
+  {id:"phone",name:"Role-play: phone call",role:"a receptionist answering the phone at a clinic; the learner is calling to book an appointment",open:"Good morning, City Clinic. How can I help you?"},
+  {id:"interview",name:"Role-play: job interview",role:"a polite job interviewer; ask one interview question at a time and react to the answers",open:"Thank you for coming in today. Let's begin. Can you tell me about yourself?"},
+  {id:"work",name:"Role-play: at work",role:"the learner's manager at work, discussing tasks and a small problem",open:"Hi, do you have a minute? I'd like to talk about this week's tasks."},
+  {id:"travel",name:"Role-play: airport",role:"an airline check-in agent at the airport; the learner is a traveller",open:"Good afternoon! May I see your passport and ticket, please?"},
+  {id:"present",name:"Role-play: presentation",role:"an audience member; first ask the learner to present a short topic in 3-4 sentences, then ask one question about it",open:"I'm ready to listen. Please give a short presentation about your work or a topic you know well."}
 ];
+const FOCUS_TOPIC={id:"focus",name:"Practise my mistakes",focus:true,open:"Let's practise the things you often get wrong. Don't worry, we'll go slowly. Tell me, what did you do yesterday?"};
 let topic=TOPICS[0], history=[];
 
 const chips=$("chips");
@@ -208,7 +250,7 @@ TOPICS.forEach(t=>{
 });
 
 function startTopic(t){
-  topic=t; history=[];
+  topic=t; history=[]; convId=Date.now();
   [...chips.children].forEach((c,i)=>c.setAttribute("aria-pressed",TOPICS[i]===t));
   $("log").innerHTML="";
   addSys(`Topic: ${t.name}`);
@@ -276,6 +318,217 @@ function addTip(correction,better){
     const r=document.createElement("button"); r.className="replay"; r.textContent="▶ Hear it"; r.onclick=()=>speak(better,false); d.appendChild(r); }
   log.appendChild(d); scroll();
 }
+
+/* ---------- Learning memory: levels, mistakes, phrases, daily goal (saved on this phone) ---------- */
+const LEVELS=["Beginner","Elementary","Intermediate","Advanced"];
+const LEVEL_GUIDE={
+  Beginner:"Use very short, simple sentences and very common words. Mostly present simple ('I am', 'I have', 'I work'). Ask easy yes/no or either/or questions.",
+  Elementary:"Use short sentences and common words. Practise present simple, past simple, 'can' and 'will'. Ask simple who/what/where/when questions.",
+  Intermediate:"Use natural everyday English. Practise all main tenses including present perfect and future plans, plus first conditional ('If it rains, I will…'). Ask open questions about reasons and opinions.",
+  Advanced:"Use rich, natural English with common idioms and phrasal verbs. Practise present perfect continuous, second and third conditionals, reported speech and polite indirect questions. Ask challenging follow-up questions."
+};
+function loadProg(){
+  try{ const p=JSON.parse(store.get("progress","{}")||"{}"); return Object.assign({days:{},mistakes:[],phrases:[],guesses:[],est:"",convs:[]},p); }
+  catch{ return {days:{},mistakes:[],phrases:[],guesses:[],est:"",convs:[]}; }
+}
+let prog=loadProg();
+function saveProg(){ store.set("progress",JSON.stringify(prog)); }
+const today=()=>{ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
+const goal=()=>+store.get("goal","10");
+function currentLevel(){ const m=store.get("level","auto"); return m==="auto"?(prog.est||"Elementary"):m; }
+function topMistakes(n=3){
+  const c={}; prog.mistakes.forEach(m=>{ if(m.tag) c[m.tag]=(c[m.tag]||0)+1; });
+  return Object.entries(c).sort((a,b)=>b[1]-a[1]).slice(0,n);
+}
+function streak(){
+  let n=0; const d=new Date();
+  for(;;){ const k=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    if((prog.days[k]||0)>=goal()) n++; else if(n>0||k!==today()) break;
+    d.setDate(d.getDate()-1); if(n>365) break; }
+  return n;
+}
+function updateGoalLine(){
+  const t=prog.days[today()]||0, g=goal();
+  $("goalLine").textContent=t>=g?`Today's goal done: ${t} replies ✓`:`Today: ${t} of ${g} spoken replies`;
+}
+// called after every successful tutor reply
+function recordTurn(out,heard,better){
+  prog.days[today()]=(prog.days[today()]||0)+1;
+  if(better&&out.grammar){ prog.mistakes.push({tag:String(out.grammar).toLowerCase().slice(0,40),said:heard,better,why:out.why||"",t:Date.now()}); prog.mistakes=prog.mistakes.slice(-60); }
+  const ph=out.phrase;
+  if(ph&&ph.phrase&&!prog.phrases.some(p=>p.phrase.toLowerCase()===String(ph.phrase).toLowerCase())){
+    prog.phrases.push({phrase:String(ph.phrase),meaning:String(ph.meaning||""),example:String(ph.example||""),t:Date.now()});
+    prog.phrases=prog.phrases.slice(-100);
+    addPhrase(ph);
+  }
+  if(LEVELS.includes(out.level_guess)){
+    prog.guesses.push(out.level_guess); prog.guesses=prog.guesses.slice(-8);
+    if(prog.guesses.length>=5){
+      const c={}; prog.guesses.forEach(g=>c[g]=(c[g]||0)+1);
+      const best=Object.entries(c).sort((a,b)=>b[1]-a[1])[0][0];
+      if(best!==prog.est){ const first=!prog.est; prog.est=best;
+        if(store.get("level","auto")==="auto") addSys(first?`From our chats so far, your level looks like ${best}. You can change it in Settings.`:`You're now practising at ${best} level.`); }
+    }
+  }
+  const conv=prog.convs[prog.convs.length-1];
+  if(conv&&conv.id===convId) conv.turns++; else { prog.convs.push({id:convId,topic:topic.name,date:today(),turns:1}); prog.convs=prog.convs.slice(-30); }
+  saveProg(); updateGoalLine();
+}
+let convId=Date.now();
+
+function addPhrase(ph){
+  const d=document.createElement("div"); d.className="fix phrase";
+  const k=document.createElement("div"); k.className="k"; k.textContent="New phrase";
+  const p=document.createElement("div"); p.className="good"; p.textContent=ph.phrase;
+  const m=document.createElement("div"); m.textContent=ph.meaning||"";
+  const e=document.createElement("div"); e.className="help"; e.textContent=ph.example?("Example: "+ph.example):"";
+  const row=document.createElement("div"); row.className="btnrow";
+  const b=document.createElement("button"); b.className="smallbtn"; b.textContent="▶ Hear it"; b.onclick=()=>speak(ph.example||ph.phrase,false);
+  const s=document.createElement("button"); s.className="smallbtn"; s.textContent="Saved to My phrases ✓"; s.disabled=true;
+  row.append(b,s); d.append(k,p,m,e,row); log.appendChild(d); scroll();
+}
+
+// extra instructions for the tutor, built from the learner's own history
+function learningPrompt(){
+  const lvl=currentLevel(), mode=store.get("level","auto");
+  const tm=topMistakes(3);
+  const ph=prog.phrases.slice(-6).map(p=>`"${p.phrase}"`);
+  let s=`Learner level: ${lvl}${mode==="auto"?" (estimated, may change)":" (chosen by the learner)"}. ${LEVEL_GUIDE[lvl]}\n`;
+  if(tm.length) s+=`Mistakes this learner often makes: ${tm.map(([t,n])=>`${t} (${n}x)`).join(", ")}. About once every 4-5 turns, ask a natural question that makes them use one of these correctly.\n`;
+  if(ph.length) s+=`Phrases they learned before: ${ph.join(", ")}. Now and then, use one naturally or invite them to use it.\n`;
+  if(topic.role) s+=`ROLE-PLAY: you are ${topic.role}. Stay in this role and keep the scene realistic, but still fill "better" for real mistakes.\n`;
+  if(topic.focus) s+=`FOCUS: this session practises the learner's recurring mistakes (${tm.map(t=>t[0]).join(", ")||"general grammar"}). Ask questions that make them use these structures, one at a time.\n`;
+  return s;
+}
+
+/* ---------- Progress sheet ---------- */
+function openProgress(){
+  const box=$("progBody"); box.innerHTML="";
+  const sec=(title)=>{ const h=document.createElement("h3"); h.textContent=title; box.appendChild(h); };
+  const para=(t,cls)=>{ const p=document.createElement("p"); p.className=cls||""; p.textContent=t; box.appendChild(p); return p; };
+  // today and streak
+  const t=prog.days[today()]||0;
+  sec("Daily speaking goal");
+  para(`Today: ${t} of ${goal()} spoken replies. Streak: ${streak()} day${streak()===1?"":"s"} in a row with your goal done.`);
+  const week=document.createElement("div"); week.className="week";
+  for(let i=6;i>=0;i--){ const d=new Date(); d.setDate(d.getDate()-i);
+    const k=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    const n=prog.days[k]||0; const col=document.createElement("div"); col.className="day";
+    const bar=document.createElement("div"); bar.className="bar"+(n>=goal()?" done":""); bar.style.height=Math.min(100,Math.round(n/goal()*100))+"%";
+    const lab=document.createElement("span"); lab.textContent=d.toLocaleDateString("en-US",{weekday:"narrow"});
+    const val=document.createElement("span"); val.className="n"; val.textContent=n;
+    col.append(val,bar,lab); week.appendChild(col); }
+  box.appendChild(week);
+  // level
+  sec("Level");
+  para(store.get("level","auto")==="auto"?(prog.est?`Estimated from your chats: ${prog.est}.`:"Not estimated yet. Talk for a few minutes and I'll estimate it."):`You chose: ${store.get("level")}.`);
+  // mistakes
+  sec("Mistakes to practise");
+  const tm=topMistakes(5);
+  if(!tm.length) para("No repeated mistakes yet. They will appear here as you talk.","help");
+  tm.forEach(([tag,n])=>{ const ex=[...prog.mistakes].reverse().find(m=>m.tag===tag);
+    const d=document.createElement("div"); d.className="pword";
+    const top=document.createElement("div"); top.className="ptop"; const b=document.createElement("b"); b.textContent=tag; const c=document.createElement("span"); c.className="help"; c.textContent=n+(n===1?" time":" times"); top.append(b,c);
+    const o=document.createElement("div"); o.className="orig"; o.textContent=ex.said;
+    const g=document.createElement("div"); g.className="good"; g.textContent=ex.better;
+    const w=document.createElement("div"); w.className="help"; w.textContent=ex.why;
+    d.append(top,o,g,w); box.appendChild(d); });
+  const row=document.createElement("div"); row.className="btnrow";
+  if(tm.length){ const b=document.createElement("button"); b.className="primary"; b.textContent="Practise my mistakes"; b.onclick=()=>{ $("progress").hidden=true; startTopic(FOCUS_TOPIC); }; row.appendChild(b); }
+  const q=document.createElement("button"); q.className="smallbtn"; q.textContent="Mini quiz (optional)"; q.onclick=()=>{ $("progress").hidden=true; openQuiz(); }; row.appendChild(q);
+  box.appendChild(row);
+  // phrases
+  sec(`My phrases (${prog.phrases.length})`);
+  if(!prog.phrases.length) para("New useful phrases from your chats will be saved here.","help");
+  [...prog.phrases].reverse().slice(0,20).forEach(p=>{
+    const d=document.createElement("div"); d.className="pword";
+    const top=document.createElement("div"); top.className="ptop"; const b=document.createElement("b"); b.textContent=p.phrase;
+    const h=document.createElement("button"); h.className="replay"; h.textContent="▶"; h.setAttribute("aria-label","Hear "+p.phrase); h.onclick=()=>speak(p.example||p.phrase,false);
+    top.append(b,h); const m=document.createElement("div"); m.textContent=p.meaning; const e=document.createElement("div"); e.className="help"; e.textContent=p.example;
+    d.append(top,m,e); box.appendChild(d); });
+  // recent conversations
+  sec("Recent conversations");
+  const rc=[...prog.convs].reverse().slice(0,6);
+  if(!rc.length) para("Your conversations will be listed here.","help");
+  rc.forEach(c=>para(`${c.date} · ${c.topic} · ${c.turns} replies`,"help"));
+  para("All progress is saved only on this phone, in this browser.","help");
+  // reset with in-page confirmation
+  const rr=document.createElement("div"); rr.className="btnrow";
+  const reset=document.createElement("button"); reset.className="smallbtn"; reset.textContent="Reset progress";
+  reset.onclick=()=>{ if(reset.dataset.sure){ prog={days:{},mistakes:[],phrases:[],guesses:[],est:"",convs:[]}; saveProg(); updateGoalLine(); openProgress(); }
+    else { reset.dataset.sure="1"; reset.textContent="Tap again to delete all progress"; } };
+  rr.appendChild(reset); box.appendChild(rr);
+  $("progress").hidden=false;
+}
+
+/* ---------- Mini quiz (optional) ---------- */
+let quiz=null;
+async function openQuiz(){
+  $("quiz").hidden=false; const box=$("quizBody");
+  box.innerHTML='<p class="help">Making 4 short exercises from your own mistakes and phrases…</p>';
+  const tm=topMistakes(4).map(([t])=>{ const ex=[...prog.mistakes].reverse().find(m=>m.tag===t); return `${t}: "${ex.said}" → "${ex.better}"`; });
+  const ph=prog.phrases.slice(-5).map(p=>p.phrase);
+  const sys=`You create short English speaking exercises for a ${currentLevel()} learner from Pakistan.
+Their recent mistakes: ${tm.join("; ")||"none yet"}. Phrases they learned: ${ph.join(", ")||"none yet"}.
+Make exactly 4 exercises, mixing these types:
+- "fix": give a sentence with ONE mistake like theirs; they say it correctly.
+- "build": give 3-5 words; they make one sentence using them.
+- "speak": a short question they answer in one sentence, using a given structure or phrase.
+Keep everything short, simple and practical. Answer ONLY as JSON: {"items":[{"type":"fix|build|speak","instruction":string,"prompt":string,"answer":string}]} where "answer" is one good example answer.`;
+  try{
+    const r=await askBrain(sys,[{role:"user",text:"Create the exercises."}]);
+    const m=r.raw.match(/\{[\s\S]*\}/); const data=JSON.parse(m?m[0]:r.raw);
+    quiz={items:(data.items||[]).slice(0,5),i:0,score:0};
+    if(!quiz.items.length) throw 0;
+    showQuizItem();
+  }catch{ box.innerHTML='<p class="help">Couldn\'t make a quiz right now. Please try again in a minute.</p>'; }
+}
+function showQuizItem(){
+  const box=$("quizBody"); box.innerHTML="";
+  if(quiz.i>=quiz.items.length){
+    const p=document.createElement("p"); p.className="psum"; p.textContent=`Done! ${quiz.score} of ${quiz.items.length} correct on the first try.`;
+    const b=document.createElement("button"); b.className="primary"; b.textContent="Back to conversation"; b.onclick=()=>{$("quiz").hidden=true;};
+    box.append(p,b); return;
+  }
+  const it=quiz.items[quiz.i]; let tries=0;
+  const n=document.createElement("p"); n.className="help"; n.textContent=`Exercise ${quiz.i+1} of ${quiz.items.length}`;
+  const ins=document.createElement("p"); ins.className="psum"; ins.textContent=it.instruction;
+  const pr=document.createElement("p"); pr.className="pline"; pr.textContent=it.prompt;
+  const ta=document.createElement("textarea"); ta.rows=2; ta.placeholder="Say it with 🎙, or type here"; ta.id="quizAnswer";
+  const row=document.createElement("div"); row.className="btnrow";
+  const say=document.createElement("button"); say.className="primary"; say.textContent="🎙 Say it";
+  const check=document.createElement("button"); check.className="smallbtn"; check.textContent="Check";
+  const fb=document.createElement("div");
+  row.append(say,check); box.append(n,ins,pr,ta,row,fb);
+  say.onclick=()=>{ fb.innerHTML='<p class="help">Listening…</p>'; listenOnce(t=>{ ta.value=t; if(t) check.onclick(); else fb.innerHTML='<p class="help">I didn\'t hear anything. Try again.</p>'; }); };
+  check.onclick=async()=>{
+    const ans=ta.value.trim(); if(!ans) return;
+    tries++; fb.innerHTML='<p class="help">Checking…</p>';
+    const sys=`You check one short English exercise for a ${currentLevel()} learner. The answer may come from speech-to-text, so ignore capitalization, punctuation and small recognition slips. Accept any natural, correct answer, not only the example.
+Answer ONLY as JSON: {"correct":boolean,"feedback":string (max 20 words, kind, explain the mistake if wrong),"better":string (a correct version of their answer)}`;
+    try{
+      const r=await askBrain(sys,[{role:"user",text:`Type: ${it.type}\nInstruction: ${it.instruction}\nPrompt: ${it.prompt}\nExample answer: ${it.answer}\nLearner's answer: ${ans}`}]);
+      const m=r.raw.match(/\{[\s\S]*\}/); const v=JSON.parse(m?m[0]:r.raw);
+      fb.innerHTML="";
+      const p=document.createElement("p"); p.className="psum"; p.textContent=(v.correct?"✓ Correct! ":"Not quite. ")+(v.feedback||""); fb.appendChild(p);
+      if(v.better){ const g=document.createElement("p"); g.className="good"; g.textContent=v.better; fb.appendChild(g); }
+      const r2=document.createElement("div"); r2.className="btnrow";
+      const hear=document.createElement("button"); hear.className="smallbtn"; hear.textContent="▶ Hear it"; hear.onclick=()=>speak(v.better||it.answer,false);
+      r2.appendChild(hear);
+      if(!v.correct){ const again=document.createElement("button"); again.className="smallbtn"; again.textContent="Try again"; again.onclick=()=>{ ta.value=""; fb.innerHTML=""; }; r2.appendChild(again); }
+      const next=document.createElement("button"); next.className="primary"; next.textContent=quiz.i+1<quiz.items.length?"Next":"Finish";
+      next.onclick=()=>{ quiz.i++; showQuizItem(); }; r2.appendChild(next);
+      if(v.correct&&tries===1) quiz.score++;
+      fb.appendChild(r2);
+    }catch{ fb.innerHTML='<p class="help">Couldn\'t check right now. Try again.</p>'; }
+  };
+}
+
+$("openProgress").onclick=openProgress;
+$("progress").onclick=e=>{ if(e.target.id==="progress") $("progress").hidden=true; };
+$("progClose").onclick=()=>{ $("progress").hidden=true; };
+$("quiz").onclick=e=>{ if(e.target.id==="quiz") $("quiz").hidden=true; };
+$("quizClose").onclick=()=>{ $("quiz").hidden=true; if(listening){ onHeard=()=>{}; stopAnyListening(); } };
 
 /* ---------- Voice out ---------- */
 let voices=[];
@@ -503,6 +756,7 @@ IMPORTANT: the learner's words come from phone speech-to-text, which often mishe
 - If the whole message is too garbled to understand, do NOT invent a meaning: set "unclear" to true and in "reply" kindly ask them to say it again.
 - Only correct real grammar or word-choice mistakes that would still be wrong with the intended words.
 Current practice topic: ${topic.name}.
+${learningPrompt()}
 Rules:
 - Reply in simple, clear, natural English (American or neutral). Keep "reply" short: 1-2 short sentences, then ONE easy follow-up question to keep the conversation going.
 - First understand what the learner MEANS, then respond to that meaning.
@@ -512,7 +766,10 @@ Rules:
 - If the sentence was fine, set "better" and "why" to empty strings and praise naturally inside "reply" now and then.
 - If the learner says you misunderstood them, apologize in one short sentence, say the phone sometimes mishears accents, and ask them to say it again slowly or tap Edit to fix the text. Never deny something you said earlier in this chat.
 - Never use Urdu in your reply. Never lecture. Never use lists, emojis or markdown.
-Answer ONLY as JSON: {"heard": string, "reply": string, "better": string, "why": string, "unclear": boolean}`;
+- "grammar": if you filled "better", a short tag for the mistake type (e.g. "past simple", "present perfect", "articles", "prepositions", "subject-verb agreement", "question form", "word order", "word choice", "plurals"); else "".
+- "phrase": about once every 3-4 turns, when it fits, teach ONE useful everyday phrase or collocation for the learner's level and use it in your reply: {"phrase": string, "meaning": string (simple, max 10 words), "example": string}. Otherwise null. Never repeat a phrase they already learned.
+- "level_guess": your estimate of the learner's English level from this message: "Beginner", "Elementary", "Intermediate" or "Advanced".
+Answer ONLY as JSON: {"heard": string, "reply": string, "better": string, "why": string, "grammar": string, "phrase": object|null, "level_guess": string, "unclear": boolean}`;
 }
 
 // fetch with a time limit, so one stuck model never blocks the conversation
@@ -619,7 +876,7 @@ async function sendToTutor(userText,alts=[]){
   history.push({role:"user",text:alts.length?`${userText}\n[speech-to-text other guesses: ${alts.map(a=>'"'+a+'"').join(" | ")}]`:userText});
   busy=true; mic.disabled=true; setStatus("Tutor is thinking…");
   const t0=performance.now(); let res=null, err=null;
-  try{ res=await askBrain(systemPrompt(),history.slice(-16)); }catch(e){ err=e; }
+  try{ res=await askBrain(systemPrompt(),history.slice(-12)); }catch(e){ err=e; }
   const secs=((performance.now()-t0)/1000).toFixed(1);
   busy=false; mic.disabled=false;
   if(!res){
@@ -634,10 +891,11 @@ async function sendToTutor(userText,alts=[]){
   if(!out.better&&out.correction) out.why=out.why||out.correction;   // older answer shape
   const said=(out.heard||userText).trim().toLowerCase().replace(/[.,!?]/g,"");
   const better=(!out.unclear&&out.better&&out.better.trim().toLowerCase().replace(/[.,!?]/g,"")!==said)?out.better.trim():"";
-  if(out.unclear) history.pop(); else history.push({role:"assistant",text:JSON.stringify(out)});
+  if(out.unclear) history.pop(); else history.push({role:"assistant",text:JSON.stringify({heard:out.heard,reply:out.reply,better:out.better||"",why:out.why||""})});
   addTutor(out.reply||"");
   if(better) addFix((out.heard||userText).trim(),better,out.why||"");
   addSys(`replied in ${secs}s · ${res.label}`);
+  if(!out.unclear) recordTurn(out,(out.heard||userText).trim(),better);
   let spoken=out.reply||"";
   if(better) spoken=`A more natural way to say it: ${better}. ... ${spoken}`;
   speak(spoken,true);
@@ -747,7 +1005,7 @@ $("pSay").onclick=practiseSay;
 $("pTarget").onchange=()=>{ const t=$("pTarget").value.trim(); $("pResult").innerHTML=""; if(t) loadBreakdown(t); else $("pWords").innerHTML=""; };
 
 /* ---------- Settings ---------- */
-function openSettings(){ $("about").value=store.get("about",""); $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); pendingEngine=getEngine(); syncSeg("engineSeg","engine",pendingEngine); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
+function openSettings(){ $("level").value=store.get("level","auto"); $("goal").value=store.get("goal","10"); $("about").value=store.get("about",""); $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); pendingEngine=getEngine(); syncSeg("engineSeg","engine",pendingEngine); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
 $("openSettings").onclick=openSettings;
 $("settings").onclick=e=>{ if(e.target.id==="settings") $("settings").hidden=true; };
 $("lang").value=store.get("lang","en-IN");
@@ -770,6 +1028,7 @@ $("saveSettings").onclick=()=>{
   store.set("key",$("key").value.trim());
   store.set("groq_key",$("groqKey").value.trim());
   store.set("about",$("about").value.trim());
+  store.set("level",$("level").value); store.set("goal",$("goal").value); updateGoalLine();
   groqModels=null; geminiModels=null; lastGood=""; store.set("last_good_v13","");
   store.set("lang",$("lang").value); store.set("rate",$("rate").value);
   store.set("pitch",pendingPitch); store.set("pause",pendingPause); store.set("engine",pendingEngine);
@@ -778,6 +1037,7 @@ $("saveSettings").onclick=()=>{
 };
 
 startTopic(TOPICS[0]);
+updateGoalLine();
 if(!store.get("key","")&&!store.get("groq_key","")) addSys("First time? Tap Settings and paste your free Groq key.");
 </script>
 </body>
