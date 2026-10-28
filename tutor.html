@@ -59,10 +59,20 @@ footer{border-top:1px solid var(--line);background:var(--bg);padding-top:12px;pa
 #status{text-align:center;color:var(--muted);font-weight:700;min-height:1.5em;margin-top:8px}
 .toggle{display:flex;align-items:center;gap:6px;font-size:.85rem;color:var(--muted)}
 /* settings sheet */
-#settings{position:fixed;inset:0;background:rgb(0 0 0 / .45);display:flex;align-items:flex-end;z-index:20}
+.overlay{position:fixed;inset:0;background:rgb(0 0 0 / .45);display:flex;align-items:flex-end;z-index:20}
 .sheet{background:var(--surface);width:100%;max-height:90%;overflow-y:auto;border-radius:18px 18px 0 0;
   padding-top:18px;padding-bottom:max(18px,env(safe-area-inset-bottom))}
 .sheet .wrap{display:flex;flex-direction:column;gap:14px}
+.row2{display:flex;gap:8px}
+.inline{display:flex;gap:16px}
+.pwords{display:flex;flex-direction:column;gap:10px}
+.pword{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--bg)}
+.ptop{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.syl{font-weight:700;letter-spacing:.04em;color:var(--accent)}
+.pline{font-size:1.15rem;line-height:1.8}
+.hit{color:var(--accent);font-weight:700}
+.miss{color:var(--live);font-weight:700;text-decoration:underline wavy}
+.psum{font-weight:700;margin:0}
 .sheet h2{font:600 1.3rem var(--display);margin:0}
 .ver{font:700 .8rem var(--body);color:var(--muted);margin-left:6px}
 textarea{font:inherit;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%;resize:vertical}
@@ -81,7 +91,7 @@ input[type=range]{width:100%}
   <div class="wrap">
     <div class="top">
       <h1>Bolo</h1>
-      <button class="iconbtn" id="openSettings">Settings</button>
+      <div class="row2"><button class="iconbtn" id="openPractice">🗣 Pronounce</button><button class="iconbtn" id="openSettings">Settings</button></div>
     </div>
     <div class="chips" id="chips" role="group" aria-label="Topics"></div>
   </div>
@@ -105,9 +115,22 @@ input[type=range]{width:100%}
   </div>
 </footer>
 
-<div id="settings" hidden>
+<div id="practice" class="overlay" hidden>
   <div class="sheet"><div class="wrap">
-    <h2>Settings <span class="ver">version 1.3</span></h2>
+    <div class="top"><h2>Pronunciation practice</h2><button class="iconbtn" id="pClose">Close</button></div>
+    <div class="field">
+      <label class="label" for="pTarget">Sentence or word to practise</label>
+      <textarea id="pTarget" rows="2" placeholder="Type a word or sentence, e.g. I worked at the hospital yesterday."></textarea>
+    </div>
+    <div class="btnrow"><button class="smallbtn" id="pNormal">▶ Normal</button><button class="smallbtn" id="pSlow">▶ Slow</button><button class="primary" id="pSay">🎙 Say it</button></div>
+    <div id="pWords" class="pwords"></div>
+    <div id="pResult"></div>
+  </div></div>
+</div>
+
+<div id="settings" class="overlay" hidden>
+  <div class="sheet"><div class="wrap">
+    <h2>Settings <span class="ver">version 1.4</span></h2>
     <div class="field">
       <label class="label" for="about">About me (optional)</label>
       <textarea id="about" rows="3" placeholder="Example: My name is Zain. I am a nurse in Karachi. I also teach students."></textarea>
@@ -161,6 +184,7 @@ input[type=range]{width:100%}
 
 <script>
 const $=id=>document.getElementById(id);
+const getEngine=()=>store.get("engine",store.get("groq_key","")?"whisper":"google");
 const store={get(k,d){try{const v=localStorage.getItem("bolo_"+k);return v===null?d:v}catch{return d}},
              set(k,v){try{localStorage.setItem("bolo_"+k,v)}catch{}}};
 
@@ -226,8 +250,10 @@ function editMessage(bubble,oldText){
 }
 function addTutor(t){
   const d=document.createElement("div"); d.className="msg tutor"; d.textContent=t;
+  const row=document.createElement("div"); row.className="inline";
   const r=document.createElement("button"); r.className="replay"; r.textContent="▶ Hear again"; r.onclick=()=>speak(t,false);
-  d.appendChild(r); log.appendChild(d); scroll();
+  const p=document.createElement("button"); p.className="replay"; p.textContent="🗣 Practise"; p.onclick=()=>openPractice(t);
+  row.append(r,p); d.appendChild(row); log.appendChild(d); scroll();
 }
 function addFix(original,better,why){
   const d=document.createElement("div"); d.className="fix";
@@ -238,7 +264,9 @@ function addFix(original,better,why){
   const row=document.createElement("div"); row.className="btnrow";
   const hear=document.createElement("button"); hear.className="smallbtn"; hear.textContent="▶ Hear it"; hear.onclick=()=>speak(better,false);
   const slow=document.createElement("button"); slow.className="smallbtn"; slow.textContent="▶ Very slow"; slow.onclick=()=>speak(better,false,0.6);
-  row.append(hear,slow); d.appendChild(row); log.appendChild(d); scroll();
+  const prac=document.createElement("button"); prac.className="smallbtn"; prac.textContent="🗣 Practise it"; prac.onclick=()=>openPractice(better);
+  lastPracticeSuggestion=better;
+  row.append(hear,slow,prac); d.appendChild(row); log.appendChild(d); scroll();
 }
 function addTip(correction,better){
   const d=document.createElement("div"); d.className="tip";
@@ -271,7 +299,12 @@ function speak(text,thenListen,rateOverride){
   u.onend=()=>{ setStatus("Tap the mic and speak"); if(thenListen) maybeAutoListen(); };
   speechSynthesis.speak(u);
 }
-function maybeAutoListen(){ if($("auto").checked) setTimeout(startListening,400); }
+function maybeAutoListen(){ if($("auto").checked&&$("practice").hidden) setTimeout(startListening,400); }
+// Practice mode borrows the mic: the words go to a callback instead of the tutor
+let onHeard=null;
+function listenOnce(cb){ onHeard=cb; startListening(); }
+function takeHeard(text){ if(!onHeard) return false; const cb=onHeard; onHeard=null; cb(text); return true; }
+function stopAnyListening(){ if(session){ session.stopNow=true; try{rec.abort()}catch{} } if(wsession) wsession.finish(); }
 $("stopTalk").onclick=()=>{ speechSynthesis.cancel(); $("auto").checked=false; setStatus("Tap the mic and speak"); };
 
 /* ---------- Voice in ---------- */
@@ -286,7 +319,7 @@ const pauseMs=()=>PAUSES[store.get("pause","normal")]||2000;
 const LOW_CONF=0.55; // below this, the phone was unsure what it heard
 
 function startListening(){
-  if(store.get("engine","google")==="whisper") return startWhisper();
+  if(getEngine()==="whisper") return startWhisper();
   if(!SR){ addSys("Speech recognition needs the Chrome app on Android."); return; }
   if(busy||listening) return;
   speechSynthesis.cancel();
@@ -337,6 +370,8 @@ function finishListening(s){
   session=null; listening=false; mic.classList.remove("on"); mic.setAttribute("aria-label","Start speaking");
   if(s.draft) s.draft.remove();
   const text=s.segments.join(" ").replace(/\s+/g," ").trim();
+  if(!text&&onHeard&&!["not-allowed","network","audio-capture"].includes(s.lastError)){ takeHeard(""); setStatus("Tap the mic and speak"); return; }
+  if(text&&takeHeard(text)){ setStatus("Tap the mic and speak"); return; }
   if(!text){
     const m={"not-allowed":"Microphone blocked. Tap the icon left of the web address → Permissions → Microphone → Allow.",
              "network":"No internet connection. Speech recognition needs internet.",
@@ -415,6 +450,7 @@ async function startWhisper(){
   mr.onstop=async()=>{
     stream.getTracks().forEach(t=>t.stop()); ctx.close?.();
     wsession=null; listening=false; mic.classList.remove("on"); mic.setAttribute("aria-label","Start speaking");
+    if(!heard&&takeHeard("")){ setStatus("Tap the mic and speak"); return; }
     if(!heard){
       if($("auto").checked && ++misses<2){ setStatus("I'm listening…"); setTimeout(startListening,300); return; }
       misses=0; addSys("I didn't hear anything. Tap the mic when you're ready."); setStatus("Tap the mic and speak"); return;
@@ -426,6 +462,7 @@ async function startWhisper(){
                      e.status===429?"Whisper's free limit is reached for now. Switch to Google in Settings, or wait a bit.":
                      "Whisper couldn't hear that ("+e.message+"). Tap the mic and try again."); }
     busy=false; mic.disabled=false;
+    if(onHeard){ takeHeard(r?.text||""); setStatus("Tap the mic and speak"); return; }
     if(!r||!r.text){ if(r) addSys("I didn't catch any words. Tap the mic and try again."); setStatus("Tap the mic and speak"); return; }
     if(r.unsure) askToRepeat(r.text); else sendToTutor(r.text);
   };
@@ -502,9 +539,9 @@ async function groqDiscover(key){
     return known.length?known:ids.slice(0,3);
   }catch{ return GROQ_PREF.slice(0,3); }
 }
-async function callGroq(model,key){
+async function callGroq(model,key,sys,msgs){
   const body={model,temperature:0.7,max_tokens:400,
-    messages:[{role:"system",content:systemPrompt()},...history.slice(-16).map(h=>({role:h.role,content:h.text}))]};
+    messages:[{role:"system",content:sys},...msgs.map(h=>({role:h.role,content:h.text}))]};
   if(!groqLite.has(model)){
     body.response_format={type:"json_object"};
     if(/gpt-oss/.test(model)) body.reasoning_effort="low";
@@ -515,7 +552,7 @@ async function callGroq(model,key){
   const data=await res.json().catch(()=>({}));
   if(!res.ok){
     if(res.status===400 && !groqLite.has(model) && !/api.?key/i.test(data?.error?.message||"")){
-      groqLite.add(model); store.set("groq_lite",JSON.stringify([...groqLite])); return callGroq(model,key);
+      groqLite.add(model); store.set("groq_lite",JSON.stringify([...groqLite])); return callGroq(model,key,sys,msgs);
     }
     throw httpErr(res,data);
   }
@@ -540,17 +577,17 @@ async function geminiDiscover(key){
     return ok.length?ok.slice(0,4):["gemini-3.8-flash"];
   }catch{ return ["gemini-3.8-flash"]; }
 }
-async function callGemini(model,key){
+async function callGemini(model,key,sys,msgs){
   const gen={temperature:0.7,responseMimeType:"application/json",maxOutputTokens:250};
   if(thinkMode===0) gen.thinkingConfig={thinkingBudget:0};
   else if(thinkMode===1) gen.thinkingConfig={thinkingLevel:"minimal"};
-  const contents=history.slice(-16).map(h=>({role:h.role==="assistant"?"model":"user",parts:[{text:h.text}]}));
+  const contents=msgs.map(h=>({role:h.role==="assistant"?"model":"user",parts:[{text:h.text}]}));
   const res=await fetchT(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:"POST",
     headers:{"Content-Type":"application/json","x-goog-api-key":key},
-    body:JSON.stringify({systemInstruction:{parts:[{text:systemPrompt()}]},contents,generationConfig:gen})},10000);
+    body:JSON.stringify({systemInstruction:{parts:[{text:sys}]},contents,generationConfig:gen})},10000);
   const data=await res.json().catch(()=>({}));
   if(!res.ok){
-    if(res.status===400&&thinkMode<2&&/think/i.test(data?.error?.message||"")){ thinkMode++; store.set("think_v3",String(thinkMode)); return callGemini(model,key); }
+    if(res.status===400&&thinkMode<2&&/think/i.test(data?.error?.message||"")){ thinkMode++; store.set("think_v3",String(thinkMode)); return callGemini(model,key,sys,msgs); }
     throw httpErr(res,data);
   }
   return data.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("")||"";
@@ -558,7 +595,7 @@ async function callGemini(model,key){
 
 /* --- try every option in order, fastest first; remember what worked --- */
 let lastGood=store.get("last_good_v13",""); // "provider|model"
-async function askBrain(){
+async function askBrain(sys,msgs){
   const gKey=store.get("groq_key",""), mKey=store.get("key","");
   const plan=[];
   if(gKey){ if(!groqModels) groqModels=await groqDiscover(gKey); groqModels.forEach(m=>plan.push(["Groq",m])); }
@@ -568,7 +605,7 @@ async function askBrain(){
   for(const [prov,model] of plan){
     if(badProvider.has(prov)) continue;
     try{
-      const raw=prov==="Groq"?await callGroq(model,gKey):await callGemini(model,mKey);
+      const raw=prov==="Groq"?await callGroq(model,gKey,sys,msgs):await callGemini(model,mKey,sys,msgs);
       lastGood=prov+"|"+model; store.set("last_good_v13",lastGood);
       return {raw,label:prov+" · "+model};
     }catch(e){ lastErr=e; e.provider=prov; if(isKeyErr(e)) badProvider.add(prov); }
@@ -582,7 +619,7 @@ async function sendToTutor(userText,alts=[]){
   history.push({role:"user",text:alts.length?`${userText}\n[speech-to-text other guesses: ${alts.map(a=>'"'+a+'"').join(" | ")}]`:userText});
   busy=true; mic.disabled=true; setStatus("Tutor is thinking…");
   const t0=performance.now(); let res=null, err=null;
-  try{ res=await askBrain(); }catch(e){ err=e; }
+  try{ res=await askBrain(systemPrompt(),history.slice(-16)); }catch(e){ err=e; }
   const secs=((performance.now()-t0)/1000).toFixed(1);
   busy=false; mic.disabled=false;
   if(!res){
@@ -606,8 +643,111 @@ async function sendToTutor(userText,alts=[]){
   speak(spoken,true);
 }
 
+/* ---------- Pronunciation coach ---------- */
+// Hear a sentence slowly, see syllables and stress, say it yourself, and see which
+// words the listener understood. This is a hint, not a pronunciation score.
+let practiceText="", lastPracticeSuggestion="";
+function openPractice(text){
+  practiceText=(text||lastPracticeSuggestion||"").trim();
+  $("pTarget").value=practiceText;
+  $("pResult").innerHTML=""; $("pWords").innerHTML="";
+  $("practice").hidden=false;
+  speechSynthesis.cancel();
+  if(practiceText) loadBreakdown(practiceText);
+}
+function closePractice(){ $("practice").hidden=true; if(listening){ onHeard=()=>{}; stopAnyListening(); } else onHeard=null; speechSynthesis.cancel(); }
+
+const breakdownCache={};
+async function loadBreakdown(text){
+  const box=$("pWords");
+  if(breakdownCache[text]){ renderBreakdown(breakdownCache[text]); return; }
+  box.innerHTML='<p class="help">Finding the tricky words…</p>';
+  const sys=`You are an American English pronunciation coach for a learner from Pakistan.
+For the given English text, pick up to 3 words (or short phrases) a Pakistani English speaker is most likely to find hard to say the American way.
+For each, give "syllables" split with hyphens and the STRESSED syllable in CAPITALS (e.g. "HOS-pi-tal", "to-MAY-to"), and one short practical "tip" in simple words (max 14 words), e.g. about the American "r", "t" sounding like a soft "d", "v" vs "w", "th", or vowel length.
+Also give "linking": one short note on how the words join in natural fast speech (e.g. "went to the" sounds like "wen-tuh-thuh"), or "" if nothing useful.
+Answer ONLY as JSON: {"words":[{"word":string,"syllables":string,"tip":string}],"linking":string}`;
+  try{
+    const r=await askBrain(sys,[{role:"user",text}]);
+    const m=r.raw.match(/\{[\s\S]*\}/); const data=JSON.parse(m?m[0]:r.raw);
+    breakdownCache[text]=data;
+    if($("pTarget").value.trim()===text) renderBreakdown(data);
+  }catch{ box.innerHTML='<p class="help">Couldn\'t load the tips right now. You can still listen and practise.</p>'; }
+}
+function renderBreakdown(data){
+  const box=$("pWords"); box.innerHTML="";
+  (data.words||[]).slice(0,3).forEach(w=>{
+    const row=document.createElement("div"); row.className="pword";
+    const top=document.createElement("div"); top.className="ptop";
+    const name=document.createElement("b"); name.textContent=w.word;
+    const syl=document.createElement("span"); syl.className="syl"; syl.textContent=w.syllables||"";
+    top.append(name,syl);
+    const tip=document.createElement("div"); tip.className="help"; tip.textContent=w.tip||"";
+    const btns=document.createElement("div"); btns.className="btnrow";
+    const b1=document.createElement("button"); b1.className="smallbtn"; b1.textContent="▶ Word";
+    b1.onclick=()=>speak(w.word,false,0.7);
+    const b2=document.createElement("button"); b2.className="smallbtn"; b2.textContent="▶ Syllables";
+    b2.onclick=()=>speakSyllables(w.syllables||w.word,w.word);
+    btns.append(b1,b2); row.append(top,tip,btns); box.appendChild(row);
+  });
+  if(data.linking){ const p=document.createElement("p"); p.className="help"; p.textContent="In natural speech: "+data.linking; box.appendChild(p); }
+}
+// Say each syllable on its own, then the whole word
+function speakSyllables(syl,word){
+  const parts=syl.split(/[-·\s]+/).filter(Boolean).map(p=>p.toLowerCase());
+  speechSynthesis.cancel();
+  const say=(t,rate)=>{ const u=new SpeechSynthesisUtterance(t); const v=voices[+$("voice").value]; if(v){u.voice=v;u.lang=v.lang}else u.lang="en-US"; u.rate=rate; u.pitch=+store.get("pitch","1"); speechSynthesis.speak(u); };
+  parts.forEach(p=>say(p,0.6)); say(word,0.7);
+}
+
+// Compare what you meant to say with what the listener understood, word by word
+function compareWords(target,heard){
+  const norm=s=>s.toLowerCase().replace(/[’']/g,"'").replace(/[^a-z0-9' ]+/g," ").split(/\s+/).filter(Boolean);
+  const T=target.split(/\s+/).filter(Boolean), tn=norm(target), hn=norm(heard);
+  // longest common subsequence on normalized words
+  const L=Array.from({length:tn.length+1},()=>new Array(hn.length+1).fill(0));
+  for(let i=tn.length-1;i>=0;i--) for(let j=hn.length-1;j>=0;j--)
+    L[i][j]=tn[i]===hn[j]?L[i+1][j+1]+1:Math.max(L[i+1][j],L[i][j+1]);
+  const ok=new Array(tn.length).fill(false); let i=0,j=0;
+  while(i<tn.length&&j<hn.length){ if(tn[i]===hn[j]){ok[i]=true;i++;j++;} else if(L[i+1][j]>=L[i][j+1]) i++; else j++; }
+  // map back to the original words (same count when punctuation is attached to words)
+  const shown=T.length===tn.length?T:tn;
+  return {words:shown.map((w,k)=>({w,ok:ok[k]})),hit:ok.filter(Boolean).length,total:tn.length};
+}
+
+function practiseSay(){
+  const target=$("pTarget").value.trim(); if(!target) return;
+  $("pResult").innerHTML='<p class="help">Your turn. Say the sentence now…</p>';
+  listenOnce(heard=>{
+    const box=$("pResult"); box.innerHTML="";
+    if(!heard){ box.innerHTML='<p class="help">I didn\'t hear anything. Tap "Say it" and try again.</p>'; return; }
+    const r=compareWords(target,heard);
+    const line=document.createElement("div"); line.className="pline";
+    r.words.forEach(x=>{ const s=document.createElement("span"); s.className=x.ok?"hit":"miss"; s.textContent=x.w; line.append(s," "); });
+    const sum=document.createElement("p"); sum.className="psum";
+    sum.textContent=r.hit===r.total?`Great! The app understood all ${r.total} words.`:`The app understood ${r.hit} of ${r.total} words. Practise the red ones and try again.`;
+    const heardP=document.createElement("p"); heardP.className="help"; heardP.textContent="It heard: “"+heard+"”";
+    const note=document.createElement("p"); note.className="help"; note.textContent="This shows which words were understood. It is not an exact pronunciation score.";
+    box.append(sum,line,heardP,note);
+    const missed=r.words.filter(x=>!x.ok).map(x=>x.w);
+    if(missed.length&&missed.length<=3){
+      const btns=document.createElement("div"); btns.className="btnrow";
+      missed.forEach(w=>{ const b=document.createElement("button"); b.className="smallbtn"; b.textContent="▶ "+w; b.onclick=()=>speak(w.replace(/[^\w']/g,""),false,0.6); btns.appendChild(b); });
+      box.appendChild(btns);
+    }
+  });
+}
+
+$("openPractice").onclick=()=>openPractice();
+$("practice").onclick=e=>{ if(e.target.id==="practice") closePractice(); };
+$("pClose").onclick=closePractice;
+$("pNormal").onclick=()=>speak($("pTarget").value.trim(),false,1);
+$("pSlow").onclick=()=>speak($("pTarget").value.trim(),false,0.6);
+$("pSay").onclick=practiseSay;
+$("pTarget").onchange=()=>{ const t=$("pTarget").value.trim(); $("pResult").innerHTML=""; if(t) loadBreakdown(t); else $("pWords").innerHTML=""; };
+
 /* ---------- Settings ---------- */
-function openSettings(){ $("about").value=store.get("about",""); $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); pendingEngine=store.get("engine","google"); syncSeg("engineSeg","engine",pendingEngine); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
+function openSettings(){ $("about").value=store.get("about",""); $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); pendingEngine=getEngine(); syncSeg("engineSeg","engine",pendingEngine); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
 $("openSettings").onclick=openSettings;
 $("settings").onclick=e=>{ if(e.target.id==="settings") $("settings").hidden=true; };
 $("lang").value=store.get("lang","en-IN");
@@ -615,7 +755,7 @@ $("rate").value=store.get("rate","0.8"); $("rateVal").textContent=$("rate").valu
 function syncSeg(id,attr,val){ [...$(id).children].forEach(b=>b.setAttribute("aria-pressed",String(b.dataset[attr]===String(val)))); }
 $("rate").oninput=()=>{ $("rateVal").textContent=$("rate").value; syncSeg("speedSeg","rate",+$("rate").value); };
 $("speedSeg").onclick=e=>{ const r=e.target.dataset?.rate; if(!r) return; $("rate").value=r; $("rate").oninput(); };
-let pendingPitch=store.get("pitch","1"), pendingPause=store.get("pause","normal"), pendingEngine=store.get("engine","google");
+let pendingPitch=store.get("pitch","1"), pendingPause=store.get("pause","normal"), pendingEngine=getEngine();
 $("engineSeg").onclick=e=>{ const v=e.target.dataset?.engine; if(!v) return; pendingEngine=v; syncSeg("engineSeg","engine",v); };
 $("toneSeg").onclick=e=>{ const p=e.target.dataset?.pitch; if(!p) return; pendingPitch=p; syncSeg("toneSeg","pitch",p); };
 $("pauseSeg").onclick=e=>{ const p=e.target.dataset?.pause; if(!p) return; pendingPause=p; syncSeg("pauseSeg","pause",p); };
