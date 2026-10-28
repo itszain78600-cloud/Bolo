@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Bolo English Tutor</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+/* Layout: header + topic chips, chat in the middle, big mic fixed at the bottom */
+:root{
+  --bg:#f3f6f4; --surface:#ffffff; --fg:#17251f; --muted:#5d6e66;
+  --accent:#1f7a5a; --accent-ink:#ffffff; --live:#c2412d; --line:#d7e1dc;
+  --tip-bg:#fff6dc; --tip-line:#e7c766; --me:#dff1e8;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1714; --surface:#17221d; --fg:#e6efe9; --muted:#9bb0a6;
+  --accent:#4cc495; --accent-ink:#06140e; --live:#ff7a62; --line:#2a3a33;
+  --tip-bg:#2c2614; --tip-line:#7a6526; --me:#1d3a2e; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--fg);font:16px/1.5 var(--body);display:flex;flex-direction:column}
+.wrap{max-width:560px;width:100%;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
+header{padding-top:max(14px,env(safe-area-inset-top));padding-bottom:8px;border-bottom:1px solid var(--line);background:var(--bg)}
+.top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+h1{font:600 1.5rem/1.1 var(--display);margin:0}
+.iconbtn{border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:10px;padding:8px 12px;font:700 .9rem var(--body);cursor:pointer}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:10px 0 4px;scrollbar-width:none}
+.chip{flex:none;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:999px;padding:7px 14px;font:700 .9rem var(--body);cursor:pointer}
+.chip[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+#chat{flex:1;overflow-y:auto;padding-block:16px}
+#chat .wrap{display:flex;flex-direction:column;gap:12px}
+.msg{max-width:88%;padding:10px 14px;border-radius:16px;word-wrap:break-word}
+.tutor{background:var(--surface);border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px}
+.me{background:var(--me);align-self:flex-end;border-bottom-right-radius:4px}
+.tip{align-self:flex-start;max-width:88%;background:var(--tip-bg);border:1px solid var(--tip-line);border-radius:12px;padding:10px 14px;font-size:.95rem}
+.tip b{display:block;font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:2px}
+.replay{background:none;border:0;color:var(--accent);font:700 .85rem var(--body);padding:4px 0 0;cursor:pointer;display:block}
+.sys{align-self:center;color:var(--muted);font-size:.85rem;text-align:center}
+footer{border-top:1px solid var(--line);background:var(--bg);padding-top:12px;padding-bottom:max(14px,env(safe-area-inset-bottom))}
+.bar{display:flex;align-items:center;justify-content:center;gap:16px}
+#mic{width:84px;height:84px;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;cursor:pointer;box-shadow:0 6px 18px rgb(0 0 0 / .18)}
+#mic:disabled{opacity:.5}
+#mic.on{background:var(--live);animation:pulse 1.4s infinite}
+#mic:focus-visible,.chip:focus-visible,.iconbtn:focus-visible{outline:3px solid var(--fg);outline-offset:3px}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgb(194 65 45 / .45)}100%{box-shadow:0 0 0 22px rgb(194 65 45 / 0)}}
+@media (prefers-reduced-motion:reduce){#mic.on{animation:none}}
+#status{text-align:center;color:var(--muted);font-weight:700;min-height:1.5em;margin-top:8px}
+.toggle{display:flex;align-items:center;gap:6px;font-size:.85rem;color:var(--muted)}
+/* settings sheet */
+#settings{position:fixed;inset:0;background:rgb(0 0 0 / .45);display:flex;align-items:flex-end;z-index:20}
+.sheet{background:var(--surface);width:100%;max-height:90%;overflow-y:auto;border-radius:18px 18px 0 0;
+  padding-top:18px;padding-bottom:max(18px,env(safe-area-inset-bottom))}
+.sheet .wrap{display:flex;flex-direction:column;gap:14px}
+.sheet h2{font:600 1.3rem var(--display);margin:0}
+.field{display:flex;flex-direction:column;gap:6px}
+.label{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700}
+input[type=password],input[type=text],select{font:inherit;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%}
+input[type=range]{width:100%}
+.help{font-size:.88rem;color:var(--muted);margin:0}
+.primary{font:700 1rem var(--body);padding:12px;border-radius:10px;border:0;background:var(--accent);color:var(--accent-ink);cursor:pointer}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="top">
+      <h1>Bolo</h1>
+      <button class="iconbtn" id="openSettings">Settings</button>
+    </div>
+    <div class="chips" id="chips" role="group" aria-label="Topics"></div>
+  </div>
+</header>
+
+<main id="chat"><div class="wrap" id="log"></div></main>
+
+<footer>
+  <div class="wrap">
+    <div class="bar">
+      <label class="toggle"><input type="checkbox" id="auto"> Hands-free</label>
+      <button id="mic" aria-label="Start speaking">
+        <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor"></rect>
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"></path>
+        </svg>
+      </button>
+      <button class="iconbtn" id="stopTalk">Stop voice</button>
+    </div>
+    <div id="status">Tap the mic and speak</div>
+  </div>
+</footer>
+
+<div id="settings" hidden>
+  <div class="sheet"><div class="wrap">
+    <h2>Settings</h2>
+    <div class="field">
+      <label class="label" for="key">Gemini API key</label>
+      <input id="key" type="password" placeholder="Paste your key (starts with AIza…)" autocomplete="off">
+      <p class="help">Get a free key at aistudio.google.com → Get API key. It is saved only on this phone and never shared.</p>
+    </div>
+    <div class="field">
+      <label class="label" for="lang">Listening mode</label>
+      <select id="lang">
+        <option value="en-IN">English (South Asian accent)</option>
+        <option value="en-PK">English (Pakistan)</option>
+        <option value="en-US">English (American)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="label" for="rate">Tutor speed: <span id="rateVal">0.8</span>x</label>
+      <input id="rate" type="range" min="0.5" max="1.2" step="0.05" value="0.8">
+    </div>
+    <div class="field">
+      <label class="label" for="voice">Tutor voice</label>
+      <select id="voice"><option>Loading voices…</option></select>
+    </div>
+    <button class="primary" id="saveSettings">Save</button>
+  </div></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const store={get(k,d){try{const v=localStorage.getItem("bolo_"+k);return v===null?d:v}catch{return d}},
+             set(k,v){try{localStorage.setItem("bolo_"+k,v)}catch{}}};
+
+/* ---------- Topics ---------- */
+const TOPICS=[
+  {id:"intro",name:"Introduce yourself",open:"Hi! I'm your English practice partner. Let's start simple. Can you tell me a little about yourself?"},
+  {id:"shift",name:"Hospital shift",open:"Let's talk about work. How was your last shift at the hospital?"},
+  {id:"routine",name:"Daily routine",open:"Tell me about your day. What did you do this morning?"},
+  {id:"shopping",name:"Shopping",open:"Imagine we are at a shop. What do you want to buy today?"},
+  {id:"patient",name:"Talking to a patient",open:"Let's practise. I am your patient. I just arrived in the ward. Please greet me and ask how I feel."},
+  {id:"free",name:"Free talk",open:"Let's just chat! What's on your mind today?"}
+];
+let topic=TOPICS[0], history=[];
+
+const chips=$("chips");
+TOPICS.forEach(t=>{
+  const b=document.createElement("button");
+  b.className="chip"; b.textContent=t.name; b.setAttribute("aria-pressed",t===topic);
+  b.onclick=()=>startTopic(t);
+  chips.appendChild(b);
+});
+
+function startTopic(t){
+  topic=t; history=[];
+  [...chips.children].forEach((c,i)=>c.setAttribute("aria-pressed",TOPICS[i]===t));
+  $("log").innerHTML="";
+  addSys(`Topic: ${t.name}`);
+  addTutor(t.open);
+  history.push({role:"model",parts:[{text:JSON.stringify({reply:t.open,correction:"",better:""})}]});
+}
+
+/* ---------- Chat UI ---------- */
+const log=$("log");
+function scroll(){ $("chat").scrollTop=$("chat").scrollHeight; }
+function addSys(t){ const d=document.createElement("div"); d.className="sys"; d.textContent=t; log.appendChild(d); scroll(); }
+function addMe(t){ const d=document.createElement("div"); d.className="msg me"; d.textContent=t; log.appendChild(d); scroll(); }
+function addTutor(t){
+  const d=document.createElement("div"); d.className="msg tutor"; d.textContent=t;
+  const r=document.createElement("button"); r.className="replay"; r.textContent="▶ Hear again"; r.onclick=()=>speak(t,false);
+  d.appendChild(r); log.appendChild(d); scroll();
+}
+function addTip(correction,better){
+  const d=document.createElement("div"); d.className="tip";
+  const b=document.createElement("b"); b.textContent="Small tip"; d.appendChild(b);
+  if(correction){ const p=document.createElement("div"); p.textContent=correction; d.appendChild(p); }
+  if(better){ const p=document.createElement("div"); p.innerHTML="Say: <i></i>"; p.querySelector("i").textContent=better; d.appendChild(p);
+    const r=document.createElement("button"); r.className="replay"; r.textContent="▶ Hear it"; r.onclick=()=>speak(better,false); d.appendChild(r); }
+  log.appendChild(d); scroll();
+}
+
+/* ---------- Voice out ---------- */
+let voices=[];
+function loadVoices(){
+  voices=speechSynthesis.getVoices().filter(v=>v.lang&&v.lang.toLowerCase().startsWith("en"));
+  if(!voices.length) return;
+  const score=v=>(v.lang==="en-US"?10:0)+(/google/i.test(v.name)?5:0);
+  voices.sort((a,b)=>score(b)-score(a));
+  const saved=store.get("voice","");
+  $("voice").innerHTML=voices.map((v,i)=>`<option value="${i}" ${v.name===saved?"selected":""}>${v.name} (${v.lang})</option>`).join("");
+}
+if("speechSynthesis" in window){ loadVoices(); speechSynthesis.onvoiceschanged=loadVoices; }
+
+function speak(text,thenListen){
+  if(!("speechSynthesis" in window)||!text){ if(thenListen) maybeAutoListen(); return; }
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  const v=voices[+$("voice").value]; if(v){u.voice=v;u.lang=v.lang}else u.lang="en-US";
+  u.rate=+$("rate").value;
+  u.onstart=()=>setStatus("Tutor is speaking…");
+  u.onend=()=>{ setStatus("Tap the mic and speak"); if(thenListen) maybeAutoListen(); };
+  speechSynthesis.speak(u);
+}
+function maybeAutoListen(){ if($("auto").checked) setTimeout(startListening,400); }
+$("stopTalk").onclick=()=>{ speechSynthesis.cancel(); $("auto").checked=false; setStatus("Tap the mic and speak"); };
+
+/* ---------- Voice in ---------- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec=null, listening=false, busy=false;
+const mic=$("mic");
+function setStatus(t){ $("status").textContent=t; }
+
+function startListening(){
+  if(!SR){ addSys("Speech recognition needs the Chrome app on Android."); return; }
+  if(busy||listening) return;
+  speechSynthesis.cancel();
+  rec=new SR(); rec.lang=$("lang").value; rec.interimResults=true; rec.continuous=false;
+  let finalText="", interim="";
+  rec.onstart=()=>{ listening=true; mic.classList.add("on"); setStatus("Listening… speak now"); };
+  rec.onresult=e=>{
+    interim="";
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const r=e.results[i]; if(r.isFinal) finalText+=r[0].transcript; else interim+=r[0].transcript;
+    }
+    setStatus("“"+(finalText+interim).trim()+"”");
+  };
+  rec.onerror=e=>{
+    const m={"not-allowed":"Microphone blocked. Tap the icon left of the web address → Permissions → Microphone → Allow.",
+             "no-speech":"I didn't hear anything. Tap the mic and try again.",
+             "network":"No internet connection."};
+    if(e.error!=="aborted") addSys(m[e.error]||("Mic error: "+e.error));
+  };
+  rec.onend=()=>{
+    listening=false; mic.classList.remove("on");
+    const t=(finalText||interim).trim();
+    if(t) sendToTutor(t); else setStatus("Tap the mic and speak");
+  };
+  try{ rec.start(); }catch{}
+}
+mic.onclick=()=> listening ? rec.stop() : startListening();
+
+/* ---------- Tutor brain (Gemini) ---------- */
+const MODELS=["gemini-3.8-flash","gemini-flash-latest","gemini-2.5-flash","gemini-flash-lite-latest"];
+let workingModel=store.get("model","");
+
+function systemPrompt(){
+  return `You are Bolo, a warm, patient English speaking tutor for an adult in Pakistan with a medical (nursing) background.
+The learner speaks with a Pakistani accent and often mixes Urdu (in Roman script) with English. Speech-to-text may contain small recognition errors: guess the intended meaning kindly and never blame the learner for them.
+Current practice topic: ${topic.name}.
+Rules:
+- Reply in simple, clear, natural English (American or neutral). Keep "reply" short: 1-2 short sentences, then ONE easy follow-up question to keep the conversation going.
+- If the learner made a real grammar or word mistake, or used Urdu words, put ONE gentle tip in "correction" (max 15 words, encouraging) and the corrected natural sentence in "better". Focus on the most useful single fix only.
+- If the sentence was fine, set "correction" and "better" to empty strings and praise naturally inside "reply" now and then.
+- Never use Urdu in your reply. Never lecture. Never use lists, emojis or markdown.
+Answer ONLY as JSON: {"reply": string, "correction": string, "better": string}`;
+}
+
+async function callGemini(model,key,contents){
+  const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-goog-api-key":key},
+    body:JSON.stringify({
+      systemInstruction:{parts:[{text:systemPrompt()}]},
+      contents,
+      generationConfig:{temperature:0.7,responseMimeType:"application/json",maxOutputTokens:400}
+    })
+  });
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){ const err=new Error(data.error?.message||("HTTP "+res.status)); err.status=res.status; throw err; }
+  const text=data.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("")||"";
+  return text;
+}
+
+async function sendToTutor(userText){
+  const key=store.get("key","");
+  addMe(userText);
+  if(!key){ addSys("Add your free Gemini key in Settings first."); openSettings(); return; }
+  history.push({role:"user",parts:[{text:userText}]});
+  const contents=history.slice(-16);
+  busy=true; mic.disabled=true; setStatus("Tutor is thinking…");
+  let raw=null, lastErr=null;
+  const order=workingModel?[workingModel,...MODELS.filter(m=>m!==workingModel)]:MODELS;
+  for(const m of order){
+    try{ raw=await callGemini(m,key,contents); if(m!==workingModel){workingModel=m;store.set("model",m);} break; }
+    catch(e){ lastErr=e; if(e.status===400||e.status===401||e.status===403) break; }
+  }
+  busy=false; mic.disabled=false;
+  if(raw===null){
+    history.pop();
+    const s=lastErr?.status;
+    addSys(s===429?"Free limit reached for now. Wait a minute and try again.":
+           (s===400||s===401||s===403)?"Your API key didn't work. Check it in Settings.":
+           "Couldn't reach the tutor: "+(lastErr?.message||"unknown error"));
+    setStatus("Tap the mic and speak"); return;
+  }
+  let out;
+  try{ out=JSON.parse(raw.replace(/^```(json)?|```$/g,"").trim()); }catch{ out={reply:raw,correction:"",better:""}; }
+  history.push({role:"model",parts:[{text:JSON.stringify(out)}]});
+  addTutor(out.reply||"");
+  if(out.correction||out.better) addTip(out.correction,out.better);
+  let spoken=out.reply||"";
+  if(out.better) spoken=`Small tip. We say: ${out.better}. ... ${spoken}`;
+  speak(spoken,true);
+}
+
+/* ---------- Settings ---------- */
+function openSettings(){ $("key").value=store.get("key",""); $("settings").hidden=false; }
+$("openSettings").onclick=openSettings;
+$("settings").onclick=e=>{ if(e.target.id==="settings") $("settings").hidden=true; };
+$("lang").value=store.get("lang","en-IN");
+$("rate").value=store.get("rate","0.8"); $("rateVal").textContent=$("rate").value;
+$("rate").oninput=()=>$("rateVal").textContent=$("rate").value;
+$("saveSettings").onclick=()=>{
+  store.set("key",$("key").value.trim());
+  store.set("lang",$("lang").value); store.set("rate",$("rate").value);
+  const v=voices[+$("voice").value]; if(v) store.set("voice",v.name);
+  $("settings").hidden=true; addSys("Settings saved.");
+};
+
+startTopic(TOPICS[0]);
+if(!store.get("key","")) addSys("First time? Tap Settings and paste your free Gemini key.");
+</script>
+</body>
+</html>
