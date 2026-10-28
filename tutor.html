@@ -64,7 +64,8 @@ footer{border-top:1px solid var(--line);background:var(--bg);padding-top:12px;pa
   padding-top:18px;padding-bottom:max(18px,env(safe-area-inset-bottom))}
 .sheet .wrap{display:flex;flex-direction:column;gap:14px}
 .row2{display:flex;gap:8px}
-.inline{display:flex;gap:16px}
+.inline{display:flex;gap:16px;align-items:baseline}
+.inline .replay+.replay{font-weight:400;color:var(--muted);font-size:.8rem}
 .pwords{display:flex;flex-direction:column;gap:10px}
 .pword{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--bg)}
 .ptop{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
@@ -166,7 +167,7 @@ input[type=range]{width:100%}
 
 <div id="settings" class="overlay" hidden>
   <div class="sheet"><div class="wrap">
-    <h2>Settings <span class="ver">version 1.6</span></h2>
+    <h2>Settings <span class="ver">version 1.7</span></h2>
     <div class="field">
       <label class="label" for="about">About me (optional)</label>
       <textarea id="about" rows="3" placeholder="Example: My name is Zain. I am a nurse in Karachi. I also teach students."></textarea>
@@ -373,7 +374,8 @@ function updateGoalLine(){
 function recordTurn(out,heard,better){
   prog.days[today()]=(prog.days[today()]||0)+1;
   if(better&&out.grammar){ prog.mistakes.push({tag:String(out.grammar).toLowerCase().slice(0,40),said:heard,better,why:out.why||"",t:Date.now()}); prog.mistakes=prog.mistakes.slice(-60); }
-  const ph=out.phrase;
+  const ph=(turnsSincePhrase>=4)?out.phrase:null; turnsSincePhrase++;
+  if(ph&&ph.phrase) turnsSincePhrase=0;
   if(ph&&ph.phrase&&!prog.phrases.some(p=>p.phrase.toLowerCase()===String(ph.phrase).toLowerCase())){
     prog.phrases.push({phrase:String(ph.phrase),meaning:String(ph.meaning||""),example:String(ph.example||""),t:Date.now()});
     prog.phrases=prog.phrases.slice(-100);
@@ -392,7 +394,7 @@ function recordTurn(out,heard,better){
   if(conv&&conv.id===convId) conv.turns++; else { prog.convs.push({id:convId,topic:topic.name,date:today(),turns:1}); prog.convs=prog.convs.slice(-30); }
   saveProg(); updateGoalLine();
 }
-let convId=Date.now();
+let convId=Date.now(), turnsSincePhrase=4;
 
 function addPhrase(ph){
   const d=document.createElement("div"); d.className="fix phrase";
@@ -412,7 +414,7 @@ function learningPrompt(){
   const tm=topMistakes(3);
   const ph=prog.phrases.slice(-6).map(p=>`"${p.phrase}"`);
   let s=`Learner level: ${lvl}${mode==="auto"?" (estimated, may change)":" (chosen by the learner)"}. ${LEVEL_GUIDE[lvl]}\n`;
-  if(tm.length) s+=`Mistakes this learner often makes: ${tm.map(([t,n])=>`${t} (${n}x)`).join(", ")}. About once every 4-5 turns, ask a natural question that makes them use one of these correctly.\n`;
+  if(tm.length) s+=`Mistakes this learner often makes: ${tm.map(([t,n])=>`${t} (${n}x)`).join(", ")}. About once every 4-5 turns, ask a natural question about their life that needs one of these structures (e.g. for past simple: "What did you do last weekend?"). Never ask them to repeat or remember earlier sentences or exercises.\n`;
   if(ph.length) s+=`Phrases they learned before: ${ph.join(", ")}. Now and then, use one naturally or invite them to use it.\n`;
   if(topic.role) s+=`ROLE-PLAY: you are ${topic.role}. Stay in this role and keep the scene realistic, but still fill "better" for real mistakes.\n`;
   if(topic.focus) s+=`FOCUS: this session practises the learner's recurring mistakes (${tm.map(t=>t[0]).join(", ")||"general grammar"}). Ask questions that make them use these structures, one at a time.\n`;
@@ -594,6 +596,13 @@ function speakThen(text,cb,rate){
 }
 const btn=(text,cls,fn)=>{ const b=document.createElement("button"); b.className=cls||"smallbtn"; b.textContent=text; b.onclick=fn; return b; };
 
+// "skip", "leave it", "chhoro"… said during practice = stop the loop
+function wantsToStop(t){
+  const s=t.toLowerCase().replace(/[^a-z' ]/g," ").replace(/\s+/g," ").trim();
+  const n=s.split(" ").length;
+  if(n<=9&&/\b(skip( it| this)?|leave it|leave this|let it go|move on|something (else|different)|another topic|change (the )?topic|chhoro|chhodo|chodo|rehne do)\b/.test(s)) return true;
+  return n<=4&&/^(ok(ay)? )?(next|stop|continue|go ahead|bas|enough)( please)?$/.test(s);   // short commands only, so "Next week I…" still counts as an answer
+}
 // decide what happens after a corrected reply
 function shouldLoop(out){ const m=coachMode(); return m==="every"||(m==="important"&&out.severity!=="small"); }
 
@@ -608,15 +617,19 @@ async function startFixLoop(said,better,why,tag,reply){
   const it=upsertItem(tag||"grammar",said,better,why,"");
   loop={card,body,foot,it,said,better,reply,tries:0,active:true};
   foot.append(btn("Skip and continue","smallbtn",()=>endLoop(false)));
+  const hint=document.createElement("span"); hint.className="help"; hint.textContent='You can also say "skip".'; foot.appendChild(hint);
   // ask for a short lesson
   let lesson={rule:why,examples:[],urdu_hint:"",practice_prompt:""};
   const sys=`You are a kind, clear English teacher for a ${currentLevel()} learner from Pakistan.
 The learner said: "${said}". Correct version: "${better}". Mistake type: ${tag||"grammar"}.
-Return ONLY JSON: {"rule": string (the rule for THIS mistake in max 2 short, simple sentences), "examples": [two short everyday example sentences that use the rule], "urdu_hint": string (${urduHints()?"one short Roman Urdu sentence explaining the same rule":"empty string"}), "practice_prompt": string (one short question or task that makes the learner say a NEW sentence of their own using the same rule, about their own life; not the same sentence)}`;
+Return ONLY JSON: {"rule": string (the rule for THIS mistake in max 2 short, simple sentences), "examples": [two short everyday example sentences that use the rule], "urdu_hint": string (${urduHints()?"one short Roman Urdu sentence explaining the same rule":"empty string"}), "practice_sentence": string (ONLY the short corrected part that contains the fix, max 10 words, e.g. "Where will I use 'I do'?" — not the whole long sentence), "practice_prompt": string (one short question or task that makes the learner say a NEW sentence of their own using the same rule, about their own life; not the same sentence)}`;
   try{ const r=await askBrain(sys,[{role:"user",text:"Explain this mistake."}]); const m=r.raw.match(/\{[\s\S]*\}/); Object.assign(lesson,JSON.parse(m?m[0]:r.raw)); }catch{}
   if(!loop||loop.card!==card) return;
   it.rule=lesson.rule||why; saveProg();
   loop.lesson=lesson;
+  // practise only a short piece: long sentences are too hard to repeat
+  const short=(lesson.practice_sentence||"").trim();
+  loop.target=short&&short.split(/\s+/).length<=14?short:(better.split(/\s+/).length<=14?better:(short||better));
   body.innerHTML="";
   const rule=document.createElement("p"); rule.className="psum"; rule.textContent=lesson.rule||why; body.appendChild(rule);
   if(lesson.urdu_hint){ const u=document.createElement("p"); u.className="help"; u.textContent=lesson.urdu_hint; body.appendChild(u); }
@@ -628,10 +641,11 @@ Return ONLY JSON: {"rule": string (the rule for THIS mistake in max 2 short, sim
 function stepRepeat(){
   const L=loop; if(!L) return;
   const box=document.createElement("div"); box.className="lstep";
-  box.innerHTML='<div class="k">Step 1 of 2 · Say the correct sentence</div>';
+  box.innerHTML='<div class="k">Step 1 of 2 · Say this</div>';
+  const tgt=document.createElement("p"); tgt.className="pline good"; tgt.textContent=L.target; box.appendChild(tgt);
   const res=document.createElement("div"); box.appendChild(res);
   const row=document.createElement("div"); row.className="btnrow";
-  row.append(btn("▶ Hear it","smallbtn",()=>speak(L.better,false)),btn("▶ Slow","smallbtn",()=>speak(L.better,false,0.6)),btn("🎙 Say it","primary",listen));
+  row.append(btn("▶ Hear it","smallbtn",()=>speak(L.target,false)),btn("▶ Slow","smallbtn",()=>speak(L.target,false,0.6)),btn("🎙 Say it","primary",listen));
   box.appendChild(row); L.body.appendChild(box); scroll();
   L.listen=listen;
   function listen(){
@@ -640,16 +654,17 @@ function stepRepeat(){
       if(!loop) return;
       res.innerHTML="";
       if(!heard){ res.innerHTML='<p class="help">I didn\'t hear anything. Tap "Say it" and try again.</p>'; return; }
-      const r=compareWords(L.better,heard); L.tries++;
-      res.appendChild(diffLine(L.better,heard,"miss"));
+      if(wantsToStop(heard)) return endLoop(false);
+      const r=compareWords(L.target,heard); L.tries++;
+      res.appendChild(diffLine(L.target,heard,"miss"));
       const ok=r.hit/Math.max(1,r.total)>=0.85;
       const p=document.createElement("p"); p.className="psum";
       if(ok){ p.textContent="✓ Well said!"; res.appendChild(p); row.remove(); speakThen("Well said! Now step two.",stepOwn); }
-      else if(L.tries<3){ p.textContent=`Almost. The app understood ${r.hit} of ${r.total} words. Listen once more and try again.`; res.appendChild(p); speakThen("Almost. Listen again.",()=>speakThen(L.better,()=>listen(),0.7)); }
+      else if(L.tries<3){ p.textContent=`Almost. The app understood ${r.hit} of ${r.total} words. Listen once more and try again.`; res.appendChild(p); speakThen("Almost. Listen again.",()=>speakThen(L.target,()=>listen(),0.7)); }
       else { p.textContent="Good effort. Let's move to step two."; res.appendChild(p); row.remove(); speakThen("Good effort. Let's try step two.",stepOwn); }
     });
   }
-  speakThen(`Let's fix this. ${L.lesson?.rule||""} Now please say: ${L.better}`,listen);
+  speakThen(`Let's fix this. ${L.lesson?.rule||""} Now please say: ${L.target}`,listen);
 }
 
 // Step 2: make your own new sentence with the same rule
@@ -667,6 +682,7 @@ function stepOwn(){
     listenOnce(async heard=>{
       if(!loop) return;
       if(!heard){ res.innerHTML='<p class="help">I didn\'t hear anything. Tap "Answer" and try again.</p>'; return; }
+      if(wantsToStop(heard)) return endLoop(false);
       res.innerHTML=""; const you=document.createElement("div"); you.className="help"; you.textContent="You said: “"+heard+"”"; res.appendChild(you);
       const chk=document.createElement("p"); chk.className="help"; chk.textContent="Checking…"; res.appendChild(chk);
       tries++; let v={correct:false,feedback:"",better:""};
@@ -696,7 +712,9 @@ function endLoop(done){
   if(listening){ onHeard=()=>{}; stopAnyListening(); }
   L.foot.innerHTML=""; L.card.classList.add("closed");
   if(!done){ L.it.due=Date.now()+4*3600000; saveProg(); }   // skipped: review it later today
-  speakThen("Now, back to our chat. "+(L.reply||""),()=>maybeAutoListen());
+  history.push({role:"user",text:`[app note: the learner just ${done?"practised":"skipped practising"} "${L.target}" (${L.it.tag}) in a separate exercise. That is finished. Do not mention it or ask about it; continue the topic naturally.]`});
+  history.push({role:"assistant",text:JSON.stringify({heard:"",reply:L.reply||"",better:"",why:""})});
+  speakThen((done?"Now, back to our chat. ":"Okay, let's continue. ")+(L.reply||""),()=>maybeAutoListen());
 }
 
 /* --- review session for due mistakes --- */
@@ -986,9 +1004,11 @@ Rules:
 - If the sentence was fine, set "better" and "why" to empty strings and praise naturally inside "reply" now and then.
 - If the learner says you misunderstood them, apologize in one short sentence, say the phone sometimes mishears accents, and ask them to say it again slowly or tap Edit to fix the text. Never deny something you said earlier in this chat.
 - Never use Urdu in your reply. Never lecture. Never use lists, emojis or markdown.
+- If the learner ASKS about English (e.g. "Which is correct, I do or I can?", "How do I say…?"), answer clearly as a teacher in "reply" with a short example. Do NOT fill "better" for a question about English.
+- "better" must be the learner's OWN sentence corrected (same meaning, mostly the same words), never an explanation or advice.
 - "severity": if you filled "better": "important" for mistakes in tense, word order, verb form, question form or a wrong word that changes the meaning; "small" for minor slips (a missing "the"/"a", a small preposition). Else "".
 - "grammar": if you filled "better", a short tag for the mistake type (e.g. "past simple", "present perfect", "articles", "prepositions", "subject-verb agreement", "question form", "word order", "word choice", "plurals"); else "".
-- "phrase": about once every 3-4 turns, when it fits, teach ONE useful everyday phrase or collocation for the learner's level and use it in your reply: {"phrase": string, "meaning": string (simple, max 10 words), "example": string}. Otherwise null. Never repeat a phrase they already learned.
+- "phrase": only about once every 5 turns, when it fits, teach ONE useful everyday phrase or collocation for the learner's level and use it in your reply: {"phrase": string, "meaning": string (simple, max 10 words), "example": string}. Otherwise null. Never repeat a phrase they already learned.
 - "level_guess": your estimate of the learner's English level from this message: "Beginner", "Elementary", "Intermediate" or "Advanced".
 Answer ONLY as JSON: {"heard": string, "reply": string, "better": string, "why": string, "severity": string, "grammar": string, "phrase": object|null, "level_guess": string, "unclear": boolean}`;
 }
@@ -1111,7 +1131,9 @@ async function sendToTutor(userText,alts=[]){
   try{ const m=res.raw.match(/\{[\s\S]*\}/); out=JSON.parse(m?m[0]:res.raw); }catch{ out={reply:res.raw,better:"",why:""}; }
   if(!out.better&&out.correction) out.why=out.why||out.correction;   // older answer shape
   const said=(out.heard||userText).trim().toLowerCase().replace(/[.,!?]/g,"");
-  const better=(!out.unclear&&out.better&&out.better.trim().toLowerCase().replace(/[.,!?]/g,"")!==said)?out.better.trim():"";
+  let better=(!out.unclear&&out.better&&out.better.trim().toLowerCase().replace(/[.,!?]/g,"")!==said)?out.better.trim():"";
+  // a real correction keeps most of the learner's words; otherwise it's advice, not a correction
+  if(better){ const ov=compareWords(said,better); if(ov.hit/Math.max(1,ov.total)<0.5||/\b(you should|because you)\b/i.test(better)) better=""; }
   if(out.unclear) history.pop(); else history.push({role:"assistant",text:JSON.stringify({heard:out.heard,reply:out.reply,better:out.better||"",why:out.why||""})});
   addTutor(out.reply||"");
   const heardTxt=(out.heard||userText).trim();
