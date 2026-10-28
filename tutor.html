@@ -93,6 +93,18 @@ footer{border-top:1px solid var(--line);background:var(--bg);padding-top:12px;pa
 .ex .replay{display:inline;padding:0}
 .orig2{color:var(--muted)}
 .chip2{font-size:.75rem;font-weight:700;border-radius:999px;padding:2px 8px;background:var(--tip-bg);border:1px solid var(--tip-line)}
+table.grow{width:100%;border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums}
+table.grow th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:right;padding:4px}
+table.grow td{padding:6px 4px;border-top:1px solid var(--line);text-align:right}
+table.grow td:first-child{text-align:left}
+table.grow .up{color:var(--accent);font-weight:700}
+table.grow .down{color:var(--live);font-weight:700}
+details.rm{border:1px solid var(--line);border-radius:12px;padding:8px 12px;background:var(--bg)}
+details.rm summary{font-weight:700;cursor:pointer}
+.rmrow{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-size:.92rem}
+.chip2.none{background:transparent;border-color:var(--line);color:var(--muted)}
+.histrow{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:12px;padding:10px 12px;font:inherit;cursor:pointer}
+#histBody .msg{max-width:92%}
 .chip2.ok{background:var(--me);border-color:var(--accent);color:var(--accent)}
 .iconbtn{padding:8px 10px}
 .sheet h2{font:600 1.3rem var(--display);margin:0}
@@ -153,8 +165,15 @@ input[type=range]{width:100%}
 
 <div id="progress" class="overlay" hidden>
   <div class="sheet"><div class="wrap">
-    <div class="top"><h2>My progress</h2><button class="iconbtn" id="progClose">Close</button></div>
+    <div class="top"><h2>My progress</h2><div class="row2"><button class="iconbtn" id="openHistory">History</button><button class="iconbtn" id="progClose">Close</button></div></div>
     <div id="progBody" class="prog"></div>
+  </div></div>
+</div>
+
+<div id="history" class="overlay" hidden>
+  <div class="sheet"><div class="wrap">
+    <div class="top"><h2>Conversation history</h2><button class="iconbtn" id="histClose">Close</button></div>
+    <div id="histBody" class="prog"></div>
   </div></div>
 </div>
 
@@ -167,7 +186,7 @@ input[type=range]{width:100%}
 
 <div id="settings" class="overlay" hidden>
   <div class="sheet"><div class="wrap">
-    <h2>Settings <span class="ver">version 1.7</span></h2>
+    <h2>Settings <span class="ver">version 1.8</span></h2>
     <div class="field">
       <label class="label" for="about">About me (optional)</label>
       <textarea id="about" rows="3" placeholder="Example: My name is Zain. I am a nurse in Karachi. I also teach students."></textarea>
@@ -379,7 +398,7 @@ function recordTurn(out,heard,better){
   if(ph&&ph.phrase&&!prog.phrases.some(p=>p.phrase.toLowerCase()===String(ph.phrase).toLowerCase())){
     prog.phrases.push({phrase:String(ph.phrase),meaning:String(ph.meaning||""),example:String(ph.example||""),t:Date.now()});
     prog.phrases=prog.phrases.slice(-100);
-    addPhrase(ph);
+    addPhrase(ph); logChat({r:"phrase",t:ph.phrase+" — "+(ph.meaning||"")});
   }
   if(LEVELS.includes(out.level_guess)){
     prog.guesses.push(out.level_guess); prog.guesses=prog.guesses.slice(-8);
@@ -390,6 +409,7 @@ function recordTurn(out,heard,better){
         if(store.get("level","auto")==="auto") addSys(first?`From our chats so far, your level looks like ${best}. You can change it in Settings.`:`You're now practising at ${best} level.`); }
     }
   }
+  recordGrowth(out,heard,better);
   const conv=prog.convs[prog.convs.length-1];
   if(conv&&conv.id===convId) conv.turns++; else { prog.convs.push({id:convId,topic:topic.name,date:today(),turns:1}); prog.convs=prog.convs.slice(-30); }
   saveProg(); updateGoalLine();
@@ -416,6 +436,7 @@ function learningPrompt(){
   let s=`Learner level: ${lvl}${mode==="auto"?" (estimated, may change)":" (chosen by the learner)"}. ${LEVEL_GUIDE[lvl]}\n`;
   if(tm.length) s+=`Mistakes this learner often makes: ${tm.map(([t,n])=>`${t} (${n}x)`).join(", ")}. About once every 4-5 turns, ask a natural question about their life that needs one of these structures (e.g. for past simple: "What did you do last weekend?"). Never ask them to repeat or remember earlier sentences or exercises.\n`;
   if(ph.length) s+=`Phrases they learned before: ${ph.join(", ")}. Now and then, use one naturally or invite them to use it.\n`;
+  s+=roadmapPrompt()+"\n";
   if(topic.role) s+=`ROLE-PLAY: you are ${topic.role}. Stay in this role and keep the scene realistic, but still fill "better" for real mistakes.\n`;
   if(topic.focus) s+=`FOCUS: this session practises the learner's recurring mistakes (${tm.map(t=>t[0]).join(", ")||"general grammar"}). Ask questions that make them use these structures, one at a time.\n`;
   return s;
@@ -439,9 +460,11 @@ function openProgress(){
     const val=document.createElement("span"); val.className="n"; val.textContent=n;
     col.append(val,bar,lab); week.appendChild(col); }
   box.appendChild(week);
+  growthSection(box,sec,para);
   // level
   sec("Level");
   para(store.get("level","auto")==="auto"?(prog.est?`Estimated from your chats: ${prog.est}.`:"Not estimated yet. Talk for a few minutes and I'll estimate it."):`You chose: ${store.get("level")}.`);
+  roadmapSection(box,sec);
   // mistakes
   const items=prog.items||[], mastered=items.filter(i=>i.status==="mastered"), practising=items.filter(i=>i.status!=="mastered");
   sec(`My mistakes · ${mastered.length} mastered, ${practising.length} practising`);
@@ -449,7 +472,7 @@ function openProgress(){
   if(!items.length) para("When you fix a mistake with the tutor, it appears here and comes back for review after 1, 3 and 7 days.","help");
   [...practising,...mastered].forEach(it=>{
     const d=document.createElement("div"); d.className="pword";
-    const top=document.createElement("div"); top.className="ptop"; const b=document.createElement("b"); b.textContent=it.tag;
+    const top=document.createElement("div"); top.className="ptop"; const b=document.createElement("b"); b.textContent=rmLabel(it.tag);
     const c=document.createElement("span"); c.className="chip2 "+(it.status==="mastered"?"ok":"");
     const daysLeft=Math.ceil((it.due-Date.now())/DAY);
     c.textContent=it.status==="mastered"?"Mastered ✓":(it.due<=Date.now()?"Review due now":`Review in ${daysLeft} day${daysLeft===1?"":"s"}`)+` · step ${Math.min(it.stage,3)}/3`;
@@ -474,6 +497,7 @@ function openProgress(){
     d.append(top,m,e); box.appendChild(d); });
   // recent conversations
   sec("Recent conversations");
+  { const hb=btn("Read full conversations","smallbtn",()=>{ $("progress").hidden=true; openHistory(); }); box.appendChild(hb); }
   const rc=[...prog.convs].reverse().slice(0,6);
   if(!rc.length) para("Your conversations will be listed here.","help");
   rc.forEach(c=>para(`${c.date} · ${c.topic} · ${c.turns} replies`,"help"));
@@ -573,7 +597,7 @@ function upsertItem(tag,said,better,why,rule){
   Object.assign(it,{said,better,why:why||it.why||"",rule:rule||it.rule||""}); it.seen++;
   saveProg(); return it;
 }
-function passItem(it){ it.stage=Math.min(it.stage+1,4); if(it.stage>=4){ it.status="mastered"; it.due=0; } else it.due=Date.now()+STAGE_GAP[it.stage]*DAY; saveProg(); }
+function passItem(it){ it.stage=Math.min(it.stage+1,4); if(it.stage>=4){ it.status="mastered"; it.due=0; it.masteredAt=Date.now(); } else it.due=Date.now()+STAGE_GAP[it.stage]*DAY; saveProg(); }
 function failItem(it){ it.stage=1; it.status="practising"; it.due=Date.now()+DAY; saveProg(); }
 const dueItems=()=>(prog.items||[]).filter(i=>i.status!=="mastered"&&i.due&&i.due<=Date.now());
 
@@ -608,7 +632,7 @@ function shouldLoop(out){ const m=coachMode(); return m==="every"||(m==="importa
 
 async function startFixLoop(said,better,why,tag,reply){
   const card=document.createElement("div"); card.className="loop";
-  const head=document.createElement("div"); head.className="k"; head.textContent="Let's fix this together";
+  const head=document.createElement("div"); head.className="k"; head.textContent="Let's fix this together"+(tag?" · "+rmLabel(tag):"");
   const yours=document.createElement("div"); yours.className="lrow"; yours.append(Object.assign(document.createElement("span"),{className:"k",textContent:"You said"}),diffLine(said,better,"miss"));
   const right=document.createElement("div"); right.className="lrow"; right.append(Object.assign(document.createElement("span"),{className:"k",textContent:"Correct"}),diffLine(better,said,"hit"));
   const body=document.createElement("div"); body.className="lbody"; body.innerHTML='<p class="help">Preparing a short explanation…</p>';
@@ -712,6 +736,7 @@ function endLoop(done){
   if(listening){ onHeard=()=>{}; stopAnyListening(); }
   L.foot.innerHTML=""; L.card.classList.add("closed");
   if(!done){ L.it.due=Date.now()+4*3600000; saveProg(); }   // skipped: review it later today
+  logChat({r:"note",t:(done?"Practised: ":"Skipped practice: ")+L.target});
   history.push({role:"user",text:`[app note: the learner just ${done?"practised":"skipped practising"} "${L.target}" (${L.it.tag}) in a separate exercise. That is finished. Do not mention it or ask about it; continue the topic naturally.]`});
   history.push({role:"assistant",text:JSON.stringify({heard:"",reply:L.reply||"",better:"",why:""})});
   speakThen((done?"Now, back to our chat. ":"Okay, let's continue. ")+(L.reply||""),()=>maybeAutoListen());
@@ -734,8 +759,10 @@ async function runReview(){
   const card=document.createElement("div"); card.className="loop";
   card.innerHTML='<div class="k">Review</div><p class="help">Preparing your review…</p>';
   log.appendChild(card); scroll();
-  const sys=`Create review exercises for an English learner (${currentLevel()}). For each mistake below, write ONE new short sentence that contains the SAME kind of mistake (different words and situation), for the learner to say correctly.
-${due.map(i=>`- id ${i.id}: ${i.tag}. Earlier: "${i.said}" → "${i.better}". Rule: ${i.rule||i.why}`).join("\n")}
+  const sys=`Create review exercises for an English learner (${currentLevel()}).
+For each GRAMMAR item, write ONE new short sentence that contains the SAME kind of mistake (different words and situation), for the learner to say correctly.
+For each WORD item, write a short task asking them to use the word in their own sentence (e.g. "Use 'appointment' to talk about your week."), and an example answer.
+${due.map(i=>i.kind==="word"?`- id ${i.id}: WORD "${i.word}" (${i.meaning})`:`- id ${i.id}: GRAMMAR ${rmLabel(i.tag)}. Earlier: "${i.said}" → "${i.better}". Rule: ${i.rule||i.why}`).join("\n")}
 Return ONLY JSON: {"items":[{"id": string, "wrong": string, "answer": string}]}`;
   let items=[];
   try{ const r=await askBrain(sys,[{role:"user",text:"Create the review."}]); const m=r.raw.match(/\{[\s\S]*\}/); items=(JSON.parse(m?m[0]:r.raw).items||[]).filter(x=>due.some(i=>i.id===x.id)); }catch{}
@@ -744,14 +771,15 @@ Return ONLY JSON: {"items":[{"id": string, "wrong": string, "answer": string}]}`
   const next=()=>{
     if(k>=items.length){ card.innerHTML=`<div class="k">Review done</div><p class="psum">${good} of ${items.length} remembered.</p>`; speakThen(`Review done. You remembered ${good} of ${items.length}.`,()=>maybeAutoListen()); return; }
     const x=items[k], it=(prog.items||[]).find(i=>i.id===x.id);
-    card.innerHTML=`<div class="k">Review ${k+1} of ${items.length} · ${it.tag}</div>`;
-    const q=document.createElement("p"); q.className="psum"; q.textContent="Say this sentence correctly:"; const w=document.createElement("p"); w.className="pline orig2"; w.textContent=x.wrong;
+    const isWord=it&&it.kind==="word";
+    card.innerHTML=`<div class="k"></div>`; card.firstChild.textContent=`Review ${k+1} of ${items.length} · ${it?(isWord?it.tag:rmLabel(it.tag)):""}`;
+    const q=document.createElement("p"); q.className="psum"; q.textContent=isWord?"Answer with your own sentence:":"Say this sentence correctly:"; const w=document.createElement("p"); w.className="pline orig2"; w.textContent=x.wrong;
     const res=document.createElement("div"); const row=document.createElement("div"); row.className="btnrow";
     const go=()=>{ res.innerHTML='<p class="help">Listening…</p>'; listenOnce(async heard=>{
       if(!heard){ res.innerHTML='<p class="help">I didn\'t hear anything. Tap "Say it".</p>'; return; }
       res.innerHTML='<p class="help">Checking…</p>';
       let ok=false, fb="";
-      try{ const r=await askBrain(`Check if the learner corrected the sentence. Ignore capitalization, punctuation and small speech-to-text slips. Accept any correct natural version. Return ONLY JSON {"correct": boolean, "feedback": string (max 15 words)}`,[{role:"user",text:`Wrong sentence: ${x.wrong}\nExample correct answer: ${x.answer}\nLearner said: ${heard}`}]);
+      try{ const r=await askBrain(isWord?`Check if the learner used the word "${it.word}" correctly and naturally in their own sentence for the task. Ignore capitalization, punctuation and small speech-to-text slips. Return ONLY JSON {"correct": boolean, "feedback": string (max 15 words)}`:`Check if the learner corrected the sentence. Ignore capitalization, punctuation and small speech-to-text slips. Accept any correct natural version. Return ONLY JSON {"correct": boolean, "feedback": string (max 15 words)}`,[{role:"user",text:`Wrong sentence: ${x.wrong}\nExample correct answer: ${x.answer}\nLearner said: ${heard}`}]);
         const m=r.raw.match(/\{[\s\S]*\}/); const v=JSON.parse(m?m[0]:r.raw); ok=!!v.correct; fb=v.feedback||""; }catch{ fb="Couldn't check this one."; }
       res.innerHTML="";
       const p=document.createElement("p"); p.className="psum"; p.textContent=(ok?"✓ Correct. ":"Not quite. ")+fb; res.appendChild(p);
@@ -760,12 +788,190 @@ Return ONLY JSON: {"items":[{"id": string, "wrong": string, "answer": string}]}`
       row.innerHTML=""; row.append(btn("Next","primary",()=>{ k++; next(); }));
       speakThen(ok?"Correct!":"Not quite. We say: "+x.answer,()=>{});
     }); };
-    row.append(btn("▶ Hear the wrong one","smallbtn",()=>speak(x.wrong,false)),btn("🎙 Say it","primary",go));
+    row.append(btn(isWord?"▶ Hear the task":"▶ Hear the wrong one","smallbtn",()=>speak(x.wrong,false)),btn("🎙 Say it","primary",go));
     card.append(q,w,res,row); scroll();
-    speakThen("Say this sentence correctly. "+x.wrong,go);
+    speakThen((isWord?"":"Say this sentence correctly. ")+x.wrong,go);
   };
   next();
 }
+
+/* ---------- Grammar roadmap: structures introduced step by step, by level ---------- */
+const ROADMAP=[
+  ["Beginner",[["be","am / is / are"],["pres_simple","Present simple (I work)"],["neg_q","Negatives and questions (don't / do you…?)"],["articles","a / an / the"],["plurals","Plurals"],["pronouns","I / me / my"]]],
+  ["Elementary",[["past_simple","Past simple (I went)"],["past_q","Past questions (did you…?)"],["pres_cont","Present continuous (I am working)"],["going_to","Future: going to"],["can","can / can't"],["prepositions","Prepositions (in / on / at)"]]],
+  ["Intermediate",[["pres_perfect","Present perfect (I have worked)"],["past_cont","Past continuous (I was working)"],["will","Future: will"],["compare","Comparing (bigger, the best)"],["cond1","If + will (first conditional)"],["should","Advice: should / must"]]],
+  ["Advanced",[["pres_perf_cont","Present perfect continuous"],["past_perfect","Past perfect (I had worked)"],["cond2","If + would (second conditional)"],["cond3","If + would have (third conditional)"],["passive","Passive voice"],["reported","Reported speech"]]]
+];
+const RM_ALL=ROADMAP.flatMap(([lvl,list])=>list.map(([id,label])=>({id,label,lvl})));
+const rmLabel=id=>(RM_ALL.find(r=>r.id===id)||{}).label||id;
+function rmState(id){
+  const r=(prog.roadmap||{})[id]||{ok:0,err:0};
+  const it=(prog.items||[]).find(i=>i.tag===id);
+  if(it&&it.status!=="mastered") return {key:"practising",label:"Practising",r};
+  if(r.ok>=5&&(!it||it.status==="mastered")) return {key:"strong",label:"Strong ✓",r};
+  if(r.ok>0||r.err>0) return {key:"started",label:"Started",r};
+  return {key:"new",label:"Not yet",r};
+}
+// the next structure to bring in: first one at or below the current level that isn't strong yet
+function rmFocus(){
+  const upto=LEVELS.indexOf(currentLevel());
+  // 1) a structure you are still making mistakes with (at or below your level)
+  for(let i=0;i<=upto;i++) for(const [id,label] of ROADMAP[i][1]) if(rmState(id).key==="practising") return {id,label};
+  // 2) otherwise the next structure at your level that isn't strong yet (lower levels are assumed known)
+  for(const [id,label] of ROADMAP[upto][1]) if(rmState(id).key!=="strong") return {id,label};
+  // 3) everything at your level is strong: preview the next level
+  if(upto<3) return {id:ROADMAP[upto+1][1][0][0],label:ROADMAP[upto+1][1][0][1]};
+  return null;
+}
+function roadmapPrompt(){
+  const upto=Math.min(3,LEVELS.indexOf(currentLevel())+1);
+  const ids=ROADMAP.slice(0,upto+1).flatMap(([,l])=>l.map(([id,label])=>`${id}=${label}`)).join("; ");
+  const f=rmFocus();
+  return `Grammar ids: ${ids}.
+${f?`Current focus structure: ${f.label}. About once every 4 turns, ask a natural question that invites it. If the learner hasn't used it yet, model it in your reply first.`:""}`;
+}
+
+/* ---------- Conversation history (saved on this phone) ---------- */
+function loadChats(){ try{ return JSON.parse(store.get("chats","[]")||"[]"); }catch{ return []; } }
+let chats=loadChats();
+function saveChats(){ chats=chats.slice(-30); chats.forEach(c=>{ c.msgs=c.msgs.slice(-200); }); store.set("chats",JSON.stringify(chats)); }
+function chatNow(){
+  let c=chats.find(x=>x.id===convId);
+  if(!c){ c={id:convId,topicId:topic.id,topic:topic.name,date:today(),msgs:[{r:"tutor",t:topic.open}]}; chats.push(c); }
+  return c;
+}
+function logChat(entry){ chatNow().msgs.push(entry); saveChats(); }
+
+function openHistory(){
+  const box=$("histBody"); box.innerHTML="";
+  if(!chats.length){ box.innerHTML='<p class="help">Your conversations will appear here after you talk with the tutor.</p>'; $("history").hidden=false; return; }
+  [...chats].reverse().forEach(c=>{
+    const turns=c.msgs.filter(m=>m.r==="me").length;
+    const fixes=c.msgs.filter(m=>m.r==="fix").length;
+    const row=document.createElement("button"); row.className="histrow";
+    const a=document.createElement("b"); a.textContent=c.topic;
+    const b=document.createElement("span"); b.className="help"; b.textContent=`${c.date} · ${turns} replies · ${fixes} correction${fixes===1?"":"s"}`;
+    row.append(a,b); row.onclick=()=>showChat(c); box.appendChild(row);
+  });
+  const rr=document.createElement("div"); rr.className="btnrow";
+  const del=btn("Delete all history","smallbtn",()=>{ if(del.dataset.sure){ chats=[]; saveChats(); openHistory(); } else { del.dataset.sure="1"; del.textContent="Tap again to delete all"; } });
+  rr.appendChild(del); box.appendChild(rr);
+  $("history").hidden=false;
+}
+function showChat(c){
+  const box=$("histBody"); box.innerHTML="";
+  const top=document.createElement("div"); top.className="btnrow";
+  top.append(btn("← All conversations","smallbtn",openHistory),btn("Continue this conversation","primary",()=>continueChat(c)));
+  const h=document.createElement("p"); h.className="psum"; h.textContent=`${c.topic} · ${c.date}`;
+  box.append(top,h);
+  c.msgs.forEach(m=>{
+    const d=document.createElement("div");
+    if(m.r==="me"||m.r==="tutor"){ d.className="msg "+(m.r==="me"?"me":"tutor"); d.textContent=m.t;
+      const p=btn("▶","replay",()=>speak(m.t,false)); p.setAttribute("aria-label","Play"); d.appendChild(p); }
+    else if(m.r==="fix"){ d.className="fix";
+      const o=document.createElement("div"); o.className="orig"; o.textContent=m.t;
+      const g=document.createElement("div"); g.className="good"; g.textContent=m.b;
+      const w=document.createElement("div"); w.className="help"; w.textContent=m.w||"";
+      d.append(o,g,w); d.appendChild(btn("▶ Hear it","smallbtn",()=>speak(m.b,false))); }
+    else if(m.r==="phrase"){ d.className="fix phrase"; d.textContent="New phrase: "+m.t; }
+    else { d.className="sys"; d.textContent=m.t; }
+    box.appendChild(d);
+  });
+  box.scrollTop=0;
+}
+function continueChat(c){
+  $("history").hidden=true;
+  const t=[...TOPICS,FOCUS_TOPIC].find(x=>x.id===c.topicId)||TOPICS[0];
+  topic=t; convId=c.id; history=[];
+  [...chips.children].forEach((ch,i)=>ch.setAttribute("aria-pressed",TOPICS[i]===t));
+  log.innerHTML=""; addSys(`Continuing: ${c.topic} (${c.date})`);
+  const recent=c.msgs.filter(m=>m.r==="me"||m.r==="tutor").slice(-8);
+  recent.forEach(m=>{
+    if(m.r==="me"){ const b=addMe(m.t); b.querySelector(".editbtn")?.remove(); history.push({role:"user",text:m.t}); }
+    else { addTutor(m.t); history.push({role:"assistant",text:JSON.stringify({heard:"",reply:m.t,better:"",why:""})}); }
+  });
+  if(history.length&&history[0].role==="user") history.shift();
+  const last=recent[recent.length-1];
+  if(last&&last.r==="tutor") speak(last.t,true);
+}
+
+/* ---------- Growth report: measured from what you actually said ---------- */
+function weekKey(d){ const x=new Date(d); const day=(x.getDay()+6)%7; x.setDate(x.getDate()-day); return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0"); }
+const STOP=new Set("i a an the is am are was were be to of and or in on at it my me you your we he she they this that do did does not no yes so".split(" "));
+function recordGrowth(out,heard,better){
+  const wk=weekKey(Date.now());
+  prog.weeks=prog.weeks||{}; prog.firstWord=prog.firstWord||{};
+  const W=prog.weeks[wk]=prog.weeks[wk]||{turns:0,clean:0,words:0,uniq:[],newWords:0,mastered:0,phrasesUsed:0};
+  const words=heard.toLowerCase().replace(/[^a-z' ]+/g," ").split(/\s+/).filter(Boolean);
+  W.turns++; if(!better) W.clean++; W.words+=words.length;
+  const u=new Set(W.uniq);
+  words.forEach(w=>{ if(STOP.has(w)) return; u.add(w); if(!prog.firstWord[w]){ prog.firstWord[w]=wk; W.newWords++; } });
+  W.uniq=[...u].slice(0,3000);
+  // phrases from "My phrases" that you used yourself
+  const low=" "+heard.toLowerCase()+" ";
+  (prog.phrases||[]).forEach(p=>{ if(!p.usedByMe&&p.phrase.length>3&&low.includes(p.phrase.toLowerCase())){ p.usedByMe=wk; W.phrasesUsed++; } });
+  // roadmap: structures you used correctly, and mistakes by structure
+  prog.roadmap=prog.roadmap||{};
+  (Array.isArray(out.used)?out.used:[]).forEach(id=>{ if(RM_ALL.some(r=>r.id===id)){ const r=prog.roadmap[id]=prog.roadmap[id]||{ok:0,err:0}; r.ok++; } });
+  if(better&&RM_ALL.some(r=>r.id===out.grammar)){ const r=prog.roadmap[out.grammar]=prog.roadmap[out.grammar]||{ok:0,err:0}; r.err++; }
+  // words you didn't know or used wrongly → review deck
+  const v=out.vocab;
+  if(v&&v.word){ const tag="word: "+String(v.word).toLowerCase().slice(0,30);
+    let it=(prog.items||[]).find(i=>i.tag===tag);
+    if(!it){ it={id:"w"+Date.now(),tag,kind:"word",word:String(v.word),meaning:String(v.meaning||""),said:heard,better:better||String(v.example||""),why:String(v.meaning||""),rule:"",stage:1,status:"practising",due:Date.now()+DAY,seen:1}; (prog.items=prog.items||[]).push(it); }
+    else { it.seen++; if(it.status==="mastered"){ it.status="practising"; it.stage=1; it.due=Date.now()+DAY; } }
+  }
+}
+function growthSection(box,sec,para){
+  sec("Growth report");
+  const wk=weekKey(Date.now()), prevD=new Date(); prevD.setDate(prevD.getDate()-7); const pk=weekKey(prevD);
+  const A=(prog.weeks||{})[wk], B=(prog.weeks||{})[pk];
+  if(!A||A.turns<3){ para("Talk for a few minutes this week and your growth numbers will appear here.","help"); return; }
+  const m=W=>W?{acc:Math.round(W.clean/Math.max(1,W.turns)*100),len:(W.words/Math.max(1,W.turns)).toFixed(1),uniq:W.uniq.length,newW:W.newWords,turns:W.turns,ph:W.phrasesUsed||0}:null;
+  const a=m(A), b=m(B);
+  const mastered=(prog.items||[]).filter(i=>i.masteredAt&&weekKey(i.masteredAt)===wk).length;
+  const rows=[
+    ["Spoken replies",a.turns,b?.turns,""],
+    ["Sentences with no mistake",a.acc,b?.acc,"%"],
+    ["Average words per reply",a.len,b?.len,""],
+    ["Different words you used",a.uniq,b?.uniq,""],
+    ["Words you used for the first time",a.newW,b?.newW,""],
+    ["My phrases you used yourself",a.ph,b?.ph,""],
+    ["Mistakes mastered",mastered,null,""]
+  ];
+  const t=document.createElement("table"); t.className="grow";
+  t.innerHTML="<thead><tr><th></th><th>This week</th><th>Last week</th></tr></thead>";
+  const tb=document.createElement("tbody");
+  rows.forEach(([name,x,y,unit])=>{
+    const tr=document.createElement("tr");
+    const arrow=(y==null||y===undefined)?"":(+x>+y?" ▲":+x<+y?" ▼":"");
+    const cls=arrow.includes("▲")?"up":arrow.includes("▼")?"down":"";
+    tr.innerHTML=`<td></td><td class="${cls}"></td><td></td>`;
+    tr.children[0].textContent=name; tr.children[1].textContent=x+unit+arrow; tr.children[2].textContent=(y==null?"–":y+unit);
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); box.appendChild(t);
+  para("These numbers come from your own speaking in the app. Longer answers, more different words and fewer mistakes all mean real growth.","help");
+}
+function roadmapSection(box,sec){
+  sec("Grammar roadmap");
+  const f=rmFocus();
+  if(f){ const p=document.createElement("p"); p.innerHTML="Now focusing on: <b></b>"; p.querySelector("b").textContent=f.label; box.appendChild(p); }
+  const upto=Math.min(3,LEVELS.indexOf(currentLevel())+1);
+  ROADMAP.slice(0,upto+1).forEach(([lvl,list])=>{
+    const d=document.createElement("details"); d.className="rm"; if(lvl===currentLevel()) d.open=true;
+    const s=document.createElement("summary"); const strong=list.filter(([id])=>rmState(id).key==="strong").length;
+    s.textContent=`${lvl} · ${strong} of ${list.length} strong`; d.appendChild(s);
+    list.forEach(([id,label])=>{ const st=rmState(id); const r=document.createElement("div"); r.className="rmrow";
+      const n=document.createElement("span"); n.textContent=label; const c=document.createElement("span"); c.className="chip2 "+(st.key==="strong"?"ok":st.key==="new"?"none":"");
+      c.textContent=st.label+(st.r.ok?` · used ${st.r.ok}x`:""); r.append(n,c); d.appendChild(r); });
+    box.appendChild(d);
+  });
+}
+
+$("openHistory").onclick=openHistory;
+$("history").onclick=e=>{ if(e.target.id==="history") $("history").hidden=true; };
+$("histClose").onclick=()=>{ $("history").hidden=true; };
 
 /* ---------- Voice out ---------- */
 let voices=[];
@@ -1007,10 +1213,12 @@ Rules:
 - If the learner ASKS about English (e.g. "Which is correct, I do or I can?", "How do I say…?"), answer clearly as a teacher in "reply" with a short example. Do NOT fill "better" for a question about English.
 - "better" must be the learner's OWN sentence corrected (same meaning, mostly the same words), never an explanation or advice.
 - "severity": if you filled "better": "important" for mistakes in tense, word order, verb form, question form or a wrong word that changes the meaning; "small" for minor slips (a missing "the"/"a", a small preposition). Else "".
-- "grammar": if you filled "better", a short tag for the mistake type (e.g. "past simple", "present perfect", "articles", "prepositions", "subject-verb agreement", "question form", "word order", "word choice", "plurals"); else "".
+- "grammar": if you filled "better", the mistake type: use a Grammar id from the list when it fits (e.g. "past_simple"), otherwise a short tag like "word order", "word choice", "subject-verb agreement"; else "".
+- "used": array of Grammar ids the learner used CORRECTLY in this message (e.g. ["past_simple","articles"]); [] if none.
+- "vocab": if the learner didn't know an English word, used a wrong word, or used an Urdu word: {"word": the right English word, "meaning": simple meaning max 8 words, "example": short sentence}; else null.
 - "phrase": only about once every 5 turns, when it fits, teach ONE useful everyday phrase or collocation for the learner's level and use it in your reply: {"phrase": string, "meaning": string (simple, max 10 words), "example": string}. Otherwise null. Never repeat a phrase they already learned.
 - "level_guess": your estimate of the learner's English level from this message: "Beginner", "Elementary", "Intermediate" or "Advanced".
-Answer ONLY as JSON: {"heard": string, "reply": string, "better": string, "why": string, "severity": string, "grammar": string, "phrase": object|null, "level_guess": string, "unclear": boolean}`;
+Answer ONLY as JSON: {"heard": string, "reply": string, "better": string, "why": string, "severity": string, "grammar": string, "used": array, "vocab": object|null, "phrase": object|null, "level_guess": string, "unclear": boolean}`;
 }
 
 // fetch with a time limit, so one stuck model never blocks the conversation
@@ -1137,7 +1345,9 @@ async function sendToTutor(userText,alts=[]){
   if(out.unclear) history.pop(); else history.push({role:"assistant",text:JSON.stringify({heard:out.heard,reply:out.reply,better:out.better||"",why:out.why||""})});
   addTutor(out.reply||"");
   const heardTxt=(out.heard||userText).trim();
+  if(!out.unclear){ logChat({r:"me",t:heardTxt}); logChat({r:"tutor",t:out.reply||""}); }
   const doLoop=better&&shouldLoop(out);
+  if(better) logChat({r:"fix",t:heardTxt,b:better,w:out.why||""});
   if(better&&!doLoop) addFix(heardTxt,better,out.why||"");
   addSys(`replied in ${secs}s · ${res.label}`);
   if(!out.unclear) recordTurn(out,(out.heard||userText).trim(),better);
