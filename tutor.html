@@ -237,10 +237,29 @@ function startListening(){
 mic.onclick=()=> listening ? rec.stop() : startListening();
 
 /* ---------- Tutor brain (Gemini) ---------- */
-// Fastest models first ("lite" = quick replies, good enough for chat practice)
-const MODELS=["gemini-flash-lite-latest","gemini-2.5-flash-lite","gemini-flash-latest","gemini-2.5-flash"];
-let workingModel=store.get("model_v2","");
-let noThinkCfg=store.get("nothink","")==="1";
+// Models that worked before (used only if Google's model list can't be read)
+const FALLBACK_MODELS=["gemini-3.8-flash"];
+let MODELS=null;
+let workingModel=store.get("model_v3","");
+// thinking modes, fastest first: 0 = budget 0, 1 = level "minimal", 2 = no setting
+let thinkMode=+store.get("think_v3","0");
+
+// Ask Google which models this key can use, and rank the fastest first
+async function discoverModels(key){
+  try{
+    const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",{headers:{"x-goog-api-key":key}});
+    if(!res.ok) throw 0;
+    const data=await res.json();
+    const ok=(data.models||[])
+      .filter(m=>(m.supportedGenerationMethods||[]).includes("generateContent"))
+      .map(m=>m.name.replace(/^models\//,""))
+      .filter(n=>/^gemini-/.test(n) && /flash/.test(n) && !/(pro|image|tts|audio|live|embed|exp|vision|thinking)/.test(n));
+    const ver=n=>parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/)||[])[1]||"0");
+    const score=n=>ver(n)*10 + (/lite/.test(n)?5:0) - (/preview/.test(n)?3:0) - (/\d{3,}$/.test(n)?1:0);
+    ok.sort((a,b)=>score(b)-score(a));
+    return ok.length?ok.slice(0,5):FALLBACK_MODELS;
+  }catch{ return FALLBACK_MODELS; }
+}
 
 function systemPrompt(){
   return `You are Bolo, a warm, patient English speaking tutor for an adult in Pakistan with a medical (nursing) background.
@@ -259,7 +278,9 @@ Answer ONLY as JSON: {"reply": string, "correction": string, "better": string}`;
 
 async function callGemini(model,key,contents){
   const gen={temperature:0.7,responseMimeType:"application/json",maxOutputTokens:250};
-  if(!noThinkCfg) gen.thinkingConfig={thinkingBudget:0};   // skip "thinking" = much faster replies
+  // skip the AI's slow "thinking" step = much faster replies
+  if(thinkMode===0) gen.thinkingConfig={thinkingBudget:0};
+  else if(thinkMode===1) gen.thinkingConfig={thinkingLevel:"minimal"};
   const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
     method:"POST",
     headers:{"Content-Type":"application/json","x-goog-api-key":key},
@@ -268,7 +289,7 @@ async function callGemini(model,key,contents){
   const data=await res.json().catch(()=>({}));
   if(!res.ok){
     const msg=data.error?.message||("HTTP "+res.status);
-    if(res.status===400 && !noThinkCfg && /think/i.test(msg)){ noThinkCfg=true; store.set("nothink","1"); return callGemini(model,key,contents); }
+    if(res.status===400 && thinkMode<2 && /think/i.test(msg)){ thinkMode++; store.set("think_v3",String(thinkMode)); return callGemini(model,key,contents); }
     const err=new Error(msg); err.status=res.status; throw err;
   }
   const text=data.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("")||"";
@@ -283,11 +304,16 @@ async function sendToTutor(userText){
   const contents=history.slice(-16);
   busy=true; mic.disabled=true; setStatus("Tutor is thinking…");
   let raw=null, lastErr=null; const t0=performance.now();
-  const order=workingModel?[workingModel,...MODELS.filter(m=>m!==workingModel)]:MODELS;
-  for(const m of order){
-    try{ raw=await callGemini(m,key,contents); if(m!==workingModel){workingModel=m;store.set("model_v2",m);} break; }
+  let order;
+  if(workingModel) order=[workingModel];
+  else { if(!MODELS) MODELS=await discoverModels(key); order=MODELS; }
+  for(let i=0;i<order.length;i++){
+    const m=order[i];
+    try{ raw=await callGemini(m,key,contents); if(m!==workingModel){workingModel=m;store.set("model_v3",m);} break; }
     catch(e){ lastErr=e; if(e.status===401||e.status===403||(e.status===400&&/key/i.test(e.message))) break; }
   }
+  // the saved model stopped working: forget it so the next try picks again
+  if(raw===null && workingModel && lastErr?.status!==429){ workingModel=""; store.set("model_v3",""); }
   const secs=((performance.now()-t0)/1000).toFixed(1);
   busy=false; mic.disabled=false;
   if(raw===null){
@@ -303,7 +329,7 @@ async function sendToTutor(userText){
   history.push({role:"model",parts:[{text:JSON.stringify(out)}]});
   addTutor(out.reply||"");
   if(out.correction||out.better) addTip(out.correction,out.better);
-  addSys(`replied in ${secs}s`);
+  addSys(`replied in ${secs}s · ${workingModel}`);
   let spoken=out.reply||"";
   if(out.better) spoken=`Small tip. We say: ${out.better}. ... ${spoken}`;
   speak(spoken,true);
