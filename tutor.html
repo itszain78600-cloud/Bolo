@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Bolo English Tutor</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f7a5a">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
 <style>
 /* Layout: header + topic chips, chat in the middle, big mic fixed at the bottom */
@@ -186,18 +190,29 @@ input[type=range]{width:100%}
 
 <div id="settings" class="overlay" hidden>
   <div class="sheet"><div class="wrap">
-    <h2>Settings <span class="ver">version 1.8</span></h2>
+    <h2>Settings <span class="ver">version 1.9</span></h2>
     <div class="field">
       <label class="label" for="about">About me (optional)</label>
       <textarea id="about" rows="3" placeholder="Example: My name is Zain. I am a nurse in Karachi. I also teach students."></textarea>
       <p class="help">The tutor only knows what you write here and what you say. It also helps it guess words the phone mishears.</p>
     </div>
     <div class="field">
+      <span class="label">Connection</span>
+      <div class="seg" id="connSeg"><button data-conn="keys">My own keys</button><button data-conn="server">Shared Bolo server</button></div>
+    </div>
+    <div class="field" id="serverFields">
+      <label class="label" for="serverUrl">Server address</label>
+      <input id="serverUrl" type="text" placeholder="https://bolo.yourname.workers.dev" autocomplete="off">
+      <label class="label" for="serverCode">Access code</label>
+      <input id="serverCode" type="password" placeholder="Code from the person who shared Bolo" autocomplete="off">
+      <p class="help">The keys stay on the server. Friends only need this address and code.</p>
+    </div>
+    <div class="field keyfield">
       <label class="label" for="groqKey">Groq API key (fastest)</label>
       <input id="groqKey" type="password" placeholder="Paste your Groq key here" autocomplete="off">
       <p class="help">Free at console.groq.com → API Keys → Create API Key. Used first, because it replies fastest.</p>
     </div>
-    <div class="field">
+    <div class="field keyfield">
       <label class="label" for="key">Gemini API key (backup)</label>
       <input id="key" type="password" placeholder="Paste your key here" autocomplete="off">
       <p class="help">Get a free key at aistudio.google.com → Get API key. It is saved only on this phone and never shared.</p>
@@ -240,11 +255,20 @@ input[type=range]{width:100%}
       <input id="rate" type="range" min="0.5" max="1.2" step="0.05" value="0.8">
     </div>
     <div class="field">
-      <label class="label" for="voice">Tutor voice</label>
+      <span class="label">Tutor voice</span>
+      <div class="seg" id="vmodeSeg"><button data-vmode="phone">Phone voice</button><button data-vmode="ai">Natural AI voice</button></div>
+      <div id="aiVoiceBox">
+        <label class="help" for="gvoice">AI voice</label>
+        <select id="gvoice"></select>
+        <p class="help">Real male and female American voices from Groq. Needs internet and uses your Groq free limits; if it's not available on your account, the app switches back to the phone voice and tells you why.</p>
+      </div>
+      <div id="phoneVoiceBox">
+      <label class="help" for="voice">Phone voice</label>
       <select id="voice"><option>Loading voices…</option></select>
       <span class="label">Voice tone</span>
       <div class="seg" id="toneSeg"><button data-pitch="0.8">Deeper</button><button data-pitch="1">Natural</button><button data-pitch="1.2">Higher</button></div>
       <p class="help">Android usually offers one US voice. "Deeper" and "Higher" change its pitch so it sounds more male or female.</p>
+      </div>
       <button class="smallbtn" id="preview" type="button">▶ Preview voice</button>
     </div>
     <div class="field">
@@ -258,7 +282,7 @@ input[type=range]{width:100%}
 
 <script>
 const $=id=>document.getElementById(id);
-const getEngine=()=>store.get("engine",store.get("groq_key","")?"whisper":"google");
+const getEngine=()=>store.get("engine",(store.get("groq_key","")||store.get("conn","keys")==="server")?"whisper":"google");
 const store={get(k,d){try{const v=localStorage.getItem("bolo_"+k);return v===null?d:v}catch{return d}},
              set(k,v){try{localStorage.setItem("bolo_"+k,v)}catch{}}};
 
@@ -310,7 +334,7 @@ function addMe(t){
 // Fix what the phone heard, then ask the tutor again
 function editMessage(bubble,oldText){
   if(busy) return;
-  speechSynthesis.cancel(); if(listening&&session){ session.stopNow=true; try{rec.abort()}catch{} }
+  stopVoice(); if(listening&&session){ session.stopNow=true; try{rec.abort()}catch{} }
   bubble.innerHTML="";
   const ta=document.createElement("textarea"); ta.rows=3; ta.value=oldText;
   const row=document.createElement("div"); row.className="btnrow";
@@ -606,17 +630,6 @@ function diffLine(a,b,cls){
   const r=compareWords(a,b), line=document.createElement("div"); line.className="pline";
   r.words.forEach(x=>{ const s=document.createElement("span"); if(!x.ok) s.className=cls; s.textContent=x.w; line.append(s," "); });
   return line;
-}
-function speakThen(text,cb,rate){
-  if(!("speechSynthesis" in window)||!text){ cb&&cb(); return; }
-  speechSynthesis.cancel();
-  const u=new SpeechSynthesisUtterance(text); const v=voices[+$("voice").value]; if(v){u.voice=v;u.lang=v.lang}else u.lang="en-US";
-  u.rate=rate||+$("rate").value; u.pitch=+store.get("pitch","1");
-  // continue even if the phone's voice never reports "finished" (some phones skip it)
-  let fired=false; const go=()=>{ if(fired) return; fired=true; clearTimeout(guard); setStatus("Tap the mic and speak"); cb&&cb(); };
-  const guard=setTimeout(go,2500+text.split(/\s+/).length*450/(u.rate||1));
-  u.onstart=()=>setStatus("Tutor is speaking…"); u.onend=go; u.onerror=go;
-  speechSynthesis.speak(u);
 }
 const btn=(text,cls,fn)=>{ const b=document.createElement("button"); b.className=cls||"smallbtn"; b.textContent=text; b.onclick=fn; return b; };
 
@@ -973,8 +986,34 @@ $("openHistory").onclick=openHistory;
 $("history").onclick=e=>{ if(e.target.id==="history") $("history").hidden=true; };
 $("histClose").onclick=()=>{ $("history").hidden=true; };
 
-/* ---------- Voice out ---------- */
-let voices=[];
+/* ---------- Connection: your own keys, or a shared Bolo server ---------- */
+// With a Bolo server, the keys live on the server and friends only get an access code.
+const serverUrl=()=>store.get("server","").trim().replace(/\/+$/,"");
+const useServer=()=>store.get("conn","keys")==="server"&&!!serverUrl();
+const hasGroq=()=>useServer()||!!store.get("groq_key","");
+const hasGemini=()=>useServer()||!!store.get("key","");
+function groqReq(path){
+  return useServer()?{url:serverUrl()+"/groq/"+path,headers:{"X-Bolo-Code":store.get("server_code","")}}
+                    :{url:"https://api.groq.com/openai/v1/"+path,headers:{Authorization:"Bearer "+store.get("groq_key","")}};
+}
+function geminiReq(path){
+  return useServer()?{url:serverUrl()+"/gemini/"+path,headers:{"X-Bolo-Code":store.get("server_code","")}}
+                    :{url:"https://generativelanguage.googleapis.com/v1beta/"+path,headers:{"x-goog-api-key":store.get("key","")}};
+}
+// A friend can open a link like  …/tutor.html#server=https://x.workers.dev&code=1234
+(function readSetupLink(){
+  const h=location.hash.slice(1); if(!h.includes("server=")) return;
+  const q=new URLSearchParams(h);
+  if(q.get("server")){ store.set("server",q.get("server")); store.set("server_code",q.get("code")||""); store.set("conn","server"); store.set("engine","whisper"); }
+  try{ window.history.replaceState(null,"",location.pathname+location.search); }catch{}
+  setTimeout(()=>addSys("Connected to the shared Bolo server. You can start talking."),300);
+})();
+
+/* ---------- Voice out: phone voice, or a natural AI voice from Groq ---------- */
+const AI_VOICES=[["troy","Troy (male)"],["austin","Austin (male)"],["daniel","Daniel (male)"],["hannah","Hannah (female)"],["diana","Diana (female)"],["autumn","Autumn (female)"]];
+const voiceMode=()=>store.get("vmode","phone");     // phone | ai
+let voices=[], curAudio=null, voiceToken=0, aiVoiceBroken=false;
+const ttsCache=new Map();
 function loadVoices(){
   voices=speechSynthesis.getVoices().filter(v=>v.lang&&v.lang.toLowerCase().startsWith("en"));
   if(!voices.length) return;
@@ -985,23 +1024,74 @@ function loadVoices(){
 }
 if("speechSynthesis" in window){ loadVoices(); speechSynthesis.onvoiceschanged=loadVoices; }
 
-function speak(text,thenListen,rateOverride){
-  if(!("speechSynthesis" in window)||!text){ if(thenListen) maybeAutoListen(); return; }
-  speechSynthesis.cancel();
-  const u=new SpeechSynthesisUtterance(text);
-  const v=voices[+$("voice").value]; if(v){u.voice=v;u.lang=v.lang}else u.lang="en-US";
-  u.rate=rateOverride||+$("rate").value; u.pitch=+store.get("pitch","1");
-  u.onstart=()=>setStatus("Tutor is speaking…");
-  u.onend=()=>{ setStatus("Tap the mic and speak"); if(thenListen) maybeAutoListen(); };
+function stopVoice(){ voiceToken++; try{ speechSynthesis.cancel(); }catch{} if(curAudio){ try{curAudio.pause()}catch{} curAudio=null; } }
+
+function phoneSay(text,rate,pitch,done){
+  if(!("speechSynthesis" in window)){ done(); return; }
+  const u=new SpeechSynthesisUtterance(text); const v=voices[+$("voice").value]; if(v){u.voice=v;u.lang=v.lang}else u.lang="en-US";
+  u.rate=rate; u.pitch=pitch;
+  // continue even if the phone's voice never reports "finished" (some phones skip it)
+  const guard=setTimeout(done,2500+text.split(/\s+/).length*450/(rate||1));
+  u.onend=()=>{ clearTimeout(guard); done(); }; u.onerror=u.onend;
   speechSynthesis.speak(u);
 }
+// split long text into sentence-sized pieces for the AI voice
+function chunks(text){
+  const out=[]; let cur="";
+  (text.match(/[^.!?]+[.!?]*\s*/g)||[text]).forEach(s=>{ if((cur+s).length>180&&cur){ out.push(cur.trim()); cur=""; } cur+=s; });
+  if(cur.trim()) out.push(cur.trim()); return out;
+}
+async function aiAudio(text,voice){
+  const k=voice+"|"+text; if(ttsCache.has(k)) return ttsCache.get(k);
+  const req=groqReq("audio/speech");
+  const res=await fetchT(req.url,{method:"POST",headers:{...req.headers,"Content-Type":"application/json"},
+    body:JSON.stringify({model:"canopylabs/orpheus-v1-english",voice,input:text,response_format:"wav"})},15000);
+  if(!res.ok){ const data=await res.json().catch(()=>({})); throw httpErr(res,data); }
+  const url=URL.createObjectURL(await res.blob());
+  ttsCache.set(k,url); if(ttsCache.size>40){ const first=ttsCache.keys().next().value; URL.revokeObjectURL(ttsCache.get(first)); ttsCache.delete(first); }
+  return url;
+}
+function playUrl(url,rate,my){
+  return new Promise(res=>{
+    if(my!==voiceToken) return res();
+    const a=new Audio(url); a.playbackRate=rate; a.preservesPitch=true; curAudio=a;
+    a.onended=a.onerror=()=>res(); a.play().catch(()=>res());
+  });
+}
+// the one function everything uses to talk
+function voiceOut(text,rate,done,opts={}){
+  stopVoice(); const my=voiceToken;
+  if(!text){ done&&done(); return; }
+  const mode=opts.mode||voiceMode(), pitch=opts.pitch!=null?+opts.pitch:+store.get("pitch","1");
+  let fired=false; const finish=()=>{ if(fired||my!==voiceToken) return; fired=true; setStatus("Tap the mic and speak"); done&&done(); };
+  setStatus("Tutor is speaking…");
+  if(mode==="ai"&&hasGroq()&&(!aiVoiceBroken||opts.mode)){
+    const voice=opts.voice||store.get("gvoice","troy");
+    const parts=chunks(text), jobs=parts.map(p=>aiAudio(p,voice));   // fetch all pieces at once, play in order
+    (async()=>{
+      try{ for(const j of jobs){ const url=await j; if(my!==voiceToken) return; await playUrl(url,rate,my); } finish(); }
+      catch(e){
+        if(my!==voiceToken) return;
+        if(e.status===429) addSys("The AI voice has reached its free limit for now. Using the phone voice for a while.");
+        else if(!aiVoiceBroken) addSys("The AI voice isn't available ("+(e.message||"error").slice(0,120)+"). Using the phone voice instead.");
+        aiVoiceBroken=true; phoneSay(text,rate,pitch,finish);
+      }
+    })();
+    return;
+  }
+  phoneSay(text,rate,pitch,finish);
+}
+
+function speak(text,thenListen,rateOverride){ voiceOut(text,rateOverride||+$("rate").value,()=>{ if(thenListen) maybeAutoListen(); }); }
+function speakThen(text,cb,rate){ voiceOut(text,rate||+$("rate").value,cb); }
+
 function maybeAutoListen(){ if($("auto").checked&&$("practice").hidden&&!loop) setTimeout(startListening,400); }
 // Practice mode borrows the mic: the words go to a callback instead of the tutor
 let onHeard=null;
 function listenOnce(cb){ onHeard=cb; startListening(); }
 function takeHeard(text){ if(!onHeard) return false; const cb=onHeard; onHeard=null; cb(text); return true; }
 function stopAnyListening(){ if(session){ session.stopNow=true; try{rec.abort()}catch{} } if(wsession) wsession.finish(); }
-$("stopTalk").onclick=()=>{ speechSynthesis.cancel(); $("auto").checked=false; setStatus("Tap the mic and speak"); };
+$("stopTalk").onclick=()=>{ stopVoice(); $("auto").checked=false; setStatus("Tap the mic and speak"); };
 
 /* ---------- Voice in ---------- */
 // Listens in rounds: after you finish a phrase it keeps listening a little longer,
@@ -1018,7 +1108,7 @@ function startListening(){
   if(getEngine()==="whisper") return startWhisper();
   if(!SR){ addSys("Speech recognition needs the Chrome app on Android."); return; }
   if(busy||listening) return;
-  speechSynthesis.cancel();
+  stopVoice();
   session={segments:[],segAlts:[],confs:[],draft:null,lastError:"",stopNow:false};
   listening=true; mic.classList.add("on"); mic.setAttribute("aria-label","Stop and send");
   runRound(session);
@@ -1097,7 +1187,7 @@ function askToRepeat(text,alts=[]){
   yes.onclick=()=>{ d.remove(); sendToTutor(text,alts); };
   again.onclick=()=>{ d.remove(); startListening(); };
   const edit=document.createElement("button"); edit.className="smallbtn"; edit.textContent="✏️ Edit";
-  edit.onclick=()=>{ d.remove(); speechSynthesis.cancel(); const b=addMe(text); b.dataset.h=String(history.length); editMessage(b,text); };
+  edit.onclick=()=>{ d.remove(); stopVoice(); const b=addMe(text); b.dataset.h=String(history.length); editMessage(b,text); };
   row.append(yes,again,edit); d.appendChild(row); log.appendChild(d); scroll();
   speak("Sorry, I didn't catch that clearly. Please say it again.",true);
 }
@@ -1115,10 +1205,10 @@ mic.onclick=()=>{
 let wsession=null;
 async function startWhisper(){
   if(busy||listening) return;
-  const key=store.get("groq_key","");
-  if(!key){ addSys("Whisper needs your free Groq key. Add it in Settings."); openSettings(); return; }
+  const key="";
+  if(!hasGroq()){ addSys("Whisper needs your free Groq key (or a Bolo server). Add it in Settings."); openSettings(); return; }
   if(!navigator.mediaDevices||!window.MediaRecorder){ addSys("This browser can't record audio. Switch the listener to Google in Settings."); return; }
-  speechSynthesis.cancel();
+  stopVoice();
   listening=true; mic.classList.add("on"); mic.setAttribute("aria-label","Stop and send");
   setStatus("Listening… speak now");
   let stream;
@@ -1176,7 +1266,8 @@ async function whisperTranscribe(blob,key){
   fd.append("response_format","verbose_json");
   fd.append("temperature","0");
   fd.append("prompt",(about?about+" ":"")+"Pakistani English speaker, sometimes mixing Roman Urdu words like acha, theek hai, yaar.");
-  const res=await fetchT("https://api.groq.com/openai/v1/audio/transcriptions",{method:"POST",headers:{Authorization:"Bearer "+key},body:fd},20000);
+  const rq=groqReq("audio/transcriptions");
+  const res=await fetchT(rq.url,{method:"POST",headers:rq.headers,body:fd},20000);
   const data=await res.json().catch(()=>({}));
   if(!res.ok) throw httpErr(res,data);
   const segs=(data.segments||[]).filter(sg=>!(sg.no_speech_prob>0.6&&sg.avg_logprob<-0.7));   // drop silence "hallucinations"
@@ -1238,7 +1329,7 @@ const groqLite=new Set(JSON.parse(store.get("groq_lite","[]")||"[]")); // models
 
 async function groqDiscover(key){
   try{
-    const r=await fetchT("https://api.groq.com/openai/v1/models",{headers:{Authorization:"Bearer "+key}},6000);
+    const rq=groqReq("models"); const r=await fetchT(rq.url,{headers:rq.headers},6000);
     if(!r.ok) throw 0;
     const ids=((await r.json()).data||[]).map(m=>m.id).filter(id=>!/(whisper|tts|guard|playai|orpheus|vision|compound)/i.test(id));
     const known=GROQ_PREF.filter(id=>ids.includes(id));
@@ -1253,8 +1344,8 @@ async function callGroq(model,key,sys,msgs){
     if(/gpt-oss/.test(model)) body.reasoning_effort="low";
     if(/qwen3/.test(model)) body.reasoning_effort="none";
   }
-  const res=await fetchT("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
-    headers:{"Content-Type":"application/json",Authorization:"Bearer "+key},body:JSON.stringify(body)},8000);
+  const rq=groqReq("chat/completions");
+  const res=await fetchT(rq.url,{method:"POST",headers:{...rq.headers,"Content-Type":"application/json"},body:JSON.stringify(body)},8000);
   const data=await res.json().catch(()=>({}));
   if(!res.ok){
     if(res.status===400 && !groqLite.has(model) && !/api.?key/i.test(data?.error?.message||"")){
@@ -1271,7 +1362,7 @@ let thinkMode=+store.get("think_v3","0"); // 0 budget 0, 1 level minimal, 2 none
 
 async function geminiDiscover(key){
   try{
-    const res=await fetchT("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",{headers:{"x-goog-api-key":key}},6000);
+    const rq=geminiReq("models?pageSize=200"); const res=await fetchT(rq.url,{headers:rq.headers},6000);
     if(!res.ok) throw 0;
     const ok=((await res.json()).models||[])
       .filter(m=>(m.supportedGenerationMethods||[]).includes("generateContent"))
@@ -1288,8 +1379,9 @@ async function callGemini(model,key,sys,msgs){
   if(thinkMode===0) gen.thinkingConfig={thinkingBudget:0};
   else if(thinkMode===1) gen.thinkingConfig={thinkingLevel:"minimal"};
   const contents=msgs.map(h=>({role:h.role==="assistant"?"model":"user",parts:[{text:h.text}]}));
-  const res=await fetchT(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:"POST",
-    headers:{"Content-Type":"application/json","x-goog-api-key":key},
+  const rq=geminiReq(`models/${model}:generateContent`);
+  const res=await fetchT(rq.url,{method:"POST",
+    headers:{...rq.headers,"Content-Type":"application/json"},
     body:JSON.stringify({systemInstruction:{parts:[{text:sys}]},contents,generationConfig:gen})},10000);
   const data=await res.json().catch(()=>({}));
   if(!res.ok){
@@ -1302,7 +1394,7 @@ async function callGemini(model,key,sys,msgs){
 /* --- try every option in order, fastest first; remember what worked --- */
 let lastGood=store.get("last_good_v13",""); // "provider|model"
 async function askBrain(sys,msgs){
-  const gKey=store.get("groq_key",""), mKey=store.get("key","");
+  const gKey=hasGroq()?"y":"", mKey=hasGemini()?"y":"";
   const plan=[];
   if(gKey){ if(!groqModels) groqModels=await groqDiscover(gKey); groqModels.forEach(m=>plan.push(["Groq",m])); }
   if(mKey){ if(!geminiModels) geminiModels=await geminiDiscover(mKey); geminiModels.forEach(m=>plan.push(["Gemini",m])); }
@@ -1321,7 +1413,7 @@ async function askBrain(sys,msgs){
 
 async function sendToTutor(userText,alts=[]){
   const bubble=addMe(userText); bubble.dataset.h=String(history.length);
-  if(!store.get("groq_key","")&&!store.get("key","")){ addSys("Add a free Groq or Gemini key in Settings first."); openSettings(); return; }
+  if(!hasGroq()&&!hasGemini()){ addSys("Add a free Groq key (or a Bolo server) in Settings first."); openSettings(); return; }
   history.push({role:"user",text:alts.length?`${userText}\n[speech-to-text other guesses: ${alts.map(a=>'"'+a+'"').join(" | ")}]`:userText});
   busy=true; mic.disabled=true; setStatus("Tutor is thinking…");
   const t0=performance.now(); let res=null, err=null;
@@ -1330,7 +1422,7 @@ async function sendToTutor(userText,alts=[]){
   busy=false; mic.disabled=false;
   if(!res){
     history.pop();
-    addSys(isKeyErr(err)?`Your ${err.provider||""} key didn't work. Check it in Settings.`:
+    addSys(isKeyErr(err)?(useServer()?"The Bolo server refused the request. Check the server address and access code in Settings.":`Your ${err.provider||""} key didn't work. Check it in Settings.`):
            err?.status===429?"Free limit reached for now. Wait a minute and try again.":
            "The tutor is busy right now. Tap the mic and try again. ("+(err?.message||"unknown")+")");
     setStatus("Tap the mic and speak"); return;
@@ -1366,10 +1458,10 @@ function openPractice(text){
   $("pTarget").value=practiceText;
   $("pResult").innerHTML=""; $("pWords").innerHTML="";
   $("practice").hidden=false;
-  speechSynthesis.cancel();
+  stopVoice();
   if(practiceText) loadBreakdown(practiceText);
 }
-function closePractice(){ $("practice").hidden=true; if(listening){ onHeard=()=>{}; stopAnyListening(); } else onHeard=null; speechSynthesis.cancel(); }
+function closePractice(){ $("practice").hidden=true; if(listening){ onHeard=()=>{}; stopAnyListening(); } else onHeard=null; stopVoice(); }
 
 const breakdownCache={};
 async function loadBreakdown(text){
@@ -1409,9 +1501,7 @@ function renderBreakdown(data){
 // Say each syllable on its own, then the whole word
 function speakSyllables(syl,word){
   const parts=syl.split(/[-·\s]+/).filter(Boolean).map(p=>p.toLowerCase());
-  speechSynthesis.cancel();
-  const say=(t,rate)=>{ const u=new SpeechSynthesisUtterance(t); const v=voices[+$("voice").value]; if(v){u.voice=v;u.lang=v.lang}else u.lang="en-US"; u.rate=rate; u.pitch=+store.get("pitch","1"); speechSynthesis.speak(u); };
-  parts.forEach(p=>say(p,0.6)); say(word,0.7);
+  voiceOut(parts.join(", ")+". "+word+".",0.7);
 }
 
 // Compare what you meant to say with what the listener understood, word by word
@@ -1461,7 +1551,7 @@ $("pSay").onclick=practiseSay;
 $("pTarget").onchange=()=>{ const t=$("pTarget").value.trim(); $("pResult").innerHTML=""; if(t) loadBreakdown(t); else $("pWords").innerHTML=""; };
 
 /* ---------- Settings ---------- */
-function openSettings(){ pendingCoach=coachMode(); pendingUrdu=store.get("urdu","off"); syncSeg("coachSeg","coach",pendingCoach); syncSeg("urduSeg","urdu",pendingUrdu); $("level").value=store.get("level","auto"); $("goal").value=store.get("goal","10"); $("about").value=store.get("about",""); $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); pendingEngine=getEngine(); syncSeg("engineSeg","engine",pendingEngine); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
+function openSettings(){ pendingConn=store.get("conn","keys"); pendingVmode=voiceMode(); $("serverUrl").value=store.get("server",""); $("serverCode").value=store.get("server_code",""); $("gvoice").value=store.get("gvoice","troy"); showConn(); showVmode(); pendingCoach=coachMode(); pendingUrdu=store.get("urdu","off"); syncSeg("coachSeg","coach",pendingCoach); syncSeg("urduSeg","urdu",pendingUrdu); $("level").value=store.get("level","auto"); $("goal").value=store.get("goal","10"); $("about").value=store.get("about",""); $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); pendingEngine=getEngine(); syncSeg("engineSeg","engine",pendingEngine); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
 $("openSettings").onclick=openSettings;
 $("settings").onclick=e=>{ if(e.target.id==="settings") $("settings").hidden=true; };
 $("lang").value=store.get("lang","en-IN");
@@ -1469,7 +1559,12 @@ $("rate").value=store.get("rate","0.8"); $("rateVal").textContent=$("rate").valu
 function syncSeg(id,attr,val){ [...$(id).children].forEach(b=>b.setAttribute("aria-pressed",String(b.dataset[attr]===String(val)))); }
 $("rate").oninput=()=>{ $("rateVal").textContent=$("rate").value; syncSeg("speedSeg","rate",+$("rate").value); };
 $("speedSeg").onclick=e=>{ const r=e.target.dataset?.rate; if(!r) return; $("rate").value=r; $("rate").oninput(); };
-let pendingCoach=coachMode(), pendingUrdu=store.get("urdu","off");
+let pendingCoach=coachMode(), pendingUrdu=store.get("urdu","off"), pendingConn=store.get("conn","keys"), pendingVmode=voiceMode();
+$("gvoice").innerHTML=AI_VOICES.map(([v,l])=>`<option value="${v}">${l}</option>`).join("");
+function showConn(){ $("serverFields").hidden=pendingConn!=="server"; document.querySelectorAll(".keyfield").forEach(f=>f.hidden=pendingConn==="server"); syncSeg("connSeg","conn",pendingConn); }
+function showVmode(){ $("aiVoiceBox").hidden=pendingVmode!=="ai"; $("phoneVoiceBox").hidden=pendingVmode==="ai"; syncSeg("vmodeSeg","vmode",pendingVmode); }
+$("connSeg").onclick=e=>{ const v=e.target.dataset?.conn; if(!v) return; pendingConn=v; showConn(); };
+$("vmodeSeg").onclick=e=>{ const v=e.target.dataset?.vmode; if(!v) return; pendingVmode=v; showVmode(); };
 $("coachSeg").onclick=e=>{ const v=e.target.dataset?.coach; if(!v) return; pendingCoach=v; syncSeg("coachSeg","coach",v); };
 $("urduSeg").onclick=e=>{ const v=e.target.dataset?.urdu; if(!v) return; pendingUrdu=v; syncSeg("urduSeg","urdu",v); };
 let pendingPitch=store.get("pitch","1"), pendingPause=store.get("pause","normal"), pendingEngine=getEngine();
@@ -1477,15 +1572,15 @@ $("engineSeg").onclick=e=>{ const v=e.target.dataset?.engine; if(!v) return; pen
 $("toneSeg").onclick=e=>{ const p=e.target.dataset?.pitch; if(!p) return; pendingPitch=p; syncSeg("toneSeg","pitch",p); };
 $("pauseSeg").onclick=e=>{ const p=e.target.dataset?.pause; if(!p) return; pendingPause=p; syncSeg("pauseSeg","pause",p); };
 $("preview").onclick=()=>{
-  speechSynthesis.cancel();
-  const u=new SpeechSynthesisUtterance("Hello! I'm your English tutor. How was your day at the hospital?");
-  const v=voices[+$("voice").value]; if(v){u.voice=v;u.lang=v.lang}else u.lang="en-US";
-  u.rate=+$("rate").value; u.pitch=+pendingPitch; speechSynthesis.speak(u);
+  aiVoiceBroken=false;
+  voiceOut("Hello! I'm your English tutor. How was your day?",+$("rate").value,null,{mode:pendingVmode,voice:$("gvoice").value,pitch:pendingPitch});
 };
 syncSeg("engineSeg","engine",pendingEngine); syncSeg("speedSeg","rate",+$("rate").value); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause);
 $("saveSettings").onclick=()=>{
   store.set("key",$("key").value.trim());
   store.set("groq_key",$("groqKey").value.trim());
+  store.set("conn",pendingConn); store.set("server",$("serverUrl").value.trim()); store.set("server_code",$("serverCode").value.trim());
+  store.set("vmode",pendingVmode); store.set("gvoice",$("gvoice").value); aiVoiceBroken=false;
   store.set("about",$("about").value.trim());
   store.set("coach",pendingCoach); store.set("urdu",pendingUrdu);
   store.set("level",$("level").value); store.set("goal",$("goal").value); updateGoalLine();
@@ -1500,7 +1595,9 @@ startTopic(TOPICS[0]);
 updateGoalLine();
 syncSeg("coachSeg","coach",coachMode()); syncSeg("urduSeg","urdu",store.get("urdu","off"));
 setTimeout(()=>offerReview(),1200);
-if(!store.get("key","")&&!store.get("groq_key","")) addSys("First time? Tap Settings and paste your free Groq key.");
+// installable app: a small offline helper (always tries the network first, so updates arrive)
+if("serviceWorker" in navigator&&location.protocol==="https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
+if(!hasGroq()&&!hasGemini()) addSys("First time? Tap Settings and paste your free Groq key.");
 </script>
 </body>
 </html>
