@@ -97,7 +97,12 @@ input[type=range]{width:100%}
   <div class="sheet"><div class="wrap">
     <h2>Settings</h2>
     <div class="field">
-      <label class="label" for="key">Gemini API key</label>
+      <label class="label" for="groqKey">Groq API key (fastest)</label>
+      <input id="groqKey" type="password" placeholder="Paste your Groq key here" autocomplete="off">
+      <p class="help">Free at console.groq.com → API Keys → Create API Key. Used first, because it replies fastest.</p>
+    </div>
+    <div class="field">
+      <label class="label" for="key">Gemini API key (backup)</label>
       <input id="key" type="password" placeholder="Paste your key here" autocomplete="off">
       <p class="help">Get a free key at aistudio.google.com → Get API key. It is saved only on this phone and never shared.</p>
     </div>
@@ -151,7 +156,7 @@ function startTopic(t){
   $("log").innerHTML="";
   addSys(`Topic: ${t.name}`);
   addTutor(t.open);
-  history.push({role:"model",parts:[{text:JSON.stringify({reply:t.open,correction:"",better:""})}]});
+  history.push({role:"assistant",text:JSON.stringify({reply:t.open,correction:"",better:""})});
 }
 
 /* ---------- Chat UI ---------- */
@@ -236,30 +241,8 @@ function startListening(){
 }
 mic.onclick=()=> listening ? rec.stop() : startListening();
 
-/* ---------- Tutor brain (Gemini) ---------- */
-// Models that worked before (used only if Google's model list can't be read)
-const FALLBACK_MODELS=["gemini-3.8-flash"];
-let MODELS=null;
-let workingModel=store.get("model_v3","");
-// thinking modes, fastest first: 0 = budget 0, 1 = level "minimal", 2 = no setting
-let thinkMode=+store.get("think_v3","0");
-
-// Ask Google which models this key can use, and rank the fastest first
-async function discoverModels(key){
-  try{
-    const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",{headers:{"x-goog-api-key":key}});
-    if(!res.ok) throw 0;
-    const data=await res.json();
-    const ok=(data.models||[])
-      .filter(m=>(m.supportedGenerationMethods||[]).includes("generateContent"))
-      .map(m=>m.name.replace(/^models\//,""))
-      .filter(n=>/^gemini-/.test(n) && /flash/.test(n) && !/(pro|image|tts|audio|live|embed|exp|vision|thinking)/.test(n));
-    const ver=n=>parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/)||[])[1]||"0");
-    const score=n=>ver(n)*10 + (/lite/.test(n)?5:0) - (/preview/.test(n)?3:0) - (/\d{3,}$/.test(n)?1:0);
-    ok.sort((a,b)=>score(b)-score(a));
-    return ok.length?ok.slice(0,5):FALLBACK_MODELS;
-  }catch{ return FALLBACK_MODELS; }
-}
+/* ---------- Tutor brain: Groq first (fast), Gemini as backup ---------- */
+// history items: {role:"user"|"assistant", text}
 
 function systemPrompt(){
   return `You are Bolo, a warm, patient English speaking tutor for an adult in Pakistan with a medical (nursing) background.
@@ -276,67 +259,133 @@ Rules:
 Answer ONLY as JSON: {"reply": string, "correction": string, "better": string}`;
 }
 
-async function callGemini(model,key,contents){
-  const gen={temperature:0.7,responseMimeType:"application/json",maxOutputTokens:250};
-  // skip the AI's slow "thinking" step = much faster replies
-  if(thinkMode===0) gen.thinkingConfig={thinkingBudget:0};
-  else if(thinkMode===1) gen.thinkingConfig={thinkingLevel:"minimal"};
-  const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
-    method:"POST",
-    headers:{"Content-Type":"application/json","x-goog-api-key":key},
-    body:JSON.stringify({systemInstruction:{parts:[{text:systemPrompt()}]},contents,generationConfig:gen})
-  });
+// fetch with a time limit, so one stuck model never blocks the conversation
+async function fetchT(url,opts,ms){
+  const ac=new AbortController(); const t=setTimeout(()=>ac.abort(),ms);
+  try{ return await fetch(url,{...opts,signal:ac.signal}); }
+  catch(e){ const err=new Error(e.name==="AbortError"?"took too long":"network problem"); err.status=0; throw err; }
+  finally{ clearTimeout(t); }
+}
+function httpErr(res,data){ const e=new Error(data?.error?.message||("HTTP "+res.status)); e.status=res.status; return e; }
+const isKeyErr=e=>e.status===401||e.status===403||(e.status===400&&/api.?key/i.test(e.message));
+
+/* --- Groq (OpenAI-style API) --- */
+const GROQ_PREF=["openai/gpt-oss-20b","qwen/qwen3.8-27b","openai/gpt-oss-120b","llama-3.1-8b-instant","llama-3.3-70b-versatile"];
+let groqModels=null;
+const groqLite=new Set(JSON.parse(store.get("groq_lite","[]")||"[]")); // models that refused extra options
+
+async function groqDiscover(key){
+  try{
+    const r=await fetchT("https://api.groq.com/openai/v1/models",{headers:{Authorization:"Bearer "+key}},6000);
+    if(!r.ok) throw 0;
+    const ids=((await r.json()).data||[]).map(m=>m.id).filter(id=>!/(whisper|tts|guard|playai|orpheus|vision|compound)/i.test(id));
+    const known=GROQ_PREF.filter(id=>ids.includes(id));
+    return known.length?known:ids.slice(0,3);
+  }catch{ return GROQ_PREF.slice(0,3); }
+}
+async function callGroq(model,key){
+  const body={model,temperature:0.7,max_tokens:400,
+    messages:[{role:"system",content:systemPrompt()},...history.slice(-16).map(h=>({role:h.role,content:h.text}))]};
+  if(!groqLite.has(model)){
+    body.response_format={type:"json_object"};
+    if(/gpt-oss/.test(model)) body.reasoning_effort="low";
+    if(/qwen3/.test(model)) body.reasoning_effort="none";
+  }
+  const res=await fetchT("https://api.groq.com/openai/v1/chat/completions",{method:"POST",
+    headers:{"Content-Type":"application/json",Authorization:"Bearer "+key},body:JSON.stringify(body)},8000);
   const data=await res.json().catch(()=>({}));
   if(!res.ok){
-    const msg=data.error?.message||("HTTP "+res.status);
-    if(res.status===400 && thinkMode<2 && /think/i.test(msg)){ thinkMode++; store.set("think_v3",String(thinkMode)); return callGemini(model,key,contents); }
-    const err=new Error(msg); err.status=res.status; throw err;
+    if(res.status===400 && !groqLite.has(model) && !/api.?key/i.test(data?.error?.message||"")){
+      groqLite.add(model); store.set("groq_lite",JSON.stringify([...groqLite])); return callGroq(model,key);
+    }
+    throw httpErr(res,data);
   }
-  const text=data.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("")||"";
-  return text;
+  return data.choices?.[0]?.message?.content||"";
+}
+
+/* --- Gemini --- */
+let geminiModels=null;
+let thinkMode=+store.get("think_v3","0"); // 0 budget 0, 1 level minimal, 2 none
+
+async function geminiDiscover(key){
+  try{
+    const res=await fetchT("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",{headers:{"x-goog-api-key":key}},6000);
+    if(!res.ok) throw 0;
+    const ok=((await res.json()).models||[])
+      .filter(m=>(m.supportedGenerationMethods||[]).includes("generateContent"))
+      .map(m=>m.name.replace(/^models\//,""))
+      .filter(n=>/^gemini-/.test(n)&&/flash/.test(n)&&!/(pro|image|tts|audio|live|embed|exp|vision|thinking)/.test(n));
+    const ver=n=>parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/)||[])[1]||"0");
+    const score=n=>ver(n)*10+(/lite/.test(n)?5:0)-(/preview/.test(n)?3:0)-(/\d{3,}$/.test(n)?1:0);
+    ok.sort((a,b)=>score(b)-score(a));
+    return ok.length?ok.slice(0,4):["gemini-3.8-flash"];
+  }catch{ return ["gemini-3.8-flash"]; }
+}
+async function callGemini(model,key){
+  const gen={temperature:0.7,responseMimeType:"application/json",maxOutputTokens:250};
+  if(thinkMode===0) gen.thinkingConfig={thinkingBudget:0};
+  else if(thinkMode===1) gen.thinkingConfig={thinkingLevel:"minimal"};
+  const contents=history.slice(-16).map(h=>({role:h.role==="assistant"?"model":"user",parts:[{text:h.text}]}));
+  const res=await fetchT(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:"POST",
+    headers:{"Content-Type":"application/json","x-goog-api-key":key},
+    body:JSON.stringify({systemInstruction:{parts:[{text:systemPrompt()}]},contents,generationConfig:gen})},10000);
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){
+    if(res.status===400&&thinkMode<2&&/think/i.test(data?.error?.message||"")){ thinkMode++; store.set("think_v3",String(thinkMode)); return callGemini(model,key); }
+    throw httpErr(res,data);
+  }
+  return data.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("")||"";
+}
+
+/* --- try every option in order, fastest first; remember what worked --- */
+let lastGood=store.get("last_good",""); // "provider|model"
+async function askBrain(){
+  const gKey=store.get("groq_key",""), mKey=store.get("key","");
+  const plan=[];
+  if(gKey){ if(!groqModels) groqModels=await groqDiscover(gKey); groqModels.forEach(m=>plan.push(["Groq",m])); }
+  if(mKey){ if(!geminiModels) geminiModels=await geminiDiscover(mKey); geminiModels.forEach(m=>plan.push(["Gemini",m])); }
+  const i=plan.findIndex(p=>p.join("|")===lastGood); if(i>0) plan.unshift(...plan.splice(i,1));
+  let lastErr=null; const badProvider=new Set();
+  for(const [prov,model] of plan){
+    if(badProvider.has(prov)) continue;
+    try{
+      const raw=prov==="Groq"?await callGroq(model,gKey):await callGemini(model,mKey);
+      lastGood=prov+"|"+model; store.set("last_good",lastGood);
+      return {raw,label:prov+" · "+model};
+    }catch(e){ lastErr=e; e.provider=prov; if(isKeyErr(e)) badProvider.add(prov); }
+  }
+  throw lastErr||new Error("no brain");
 }
 
 async function sendToTutor(userText){
-  const key=store.get("key","");
   addMe(userText);
-  if(!key){ addSys("Add your free Gemini key in Settings first."); openSettings(); return; }
-  history.push({role:"user",parts:[{text:userText}]});
-  const contents=history.slice(-16);
+  if(!store.get("groq_key","")&&!store.get("key","")){ addSys("Add a free Groq or Gemini key in Settings first."); openSettings(); return; }
+  history.push({role:"user",text:userText});
   busy=true; mic.disabled=true; setStatus("Tutor is thinking…");
-  let raw=null, lastErr=null; const t0=performance.now();
-  let order;
-  if(workingModel) order=[workingModel];
-  else { if(!MODELS) MODELS=await discoverModels(key); order=MODELS; }
-  for(let i=0;i<order.length;i++){
-    const m=order[i];
-    try{ raw=await callGemini(m,key,contents); if(m!==workingModel){workingModel=m;store.set("model_v3",m);} break; }
-    catch(e){ lastErr=e; if(e.status===401||e.status===403||(e.status===400&&/key/i.test(e.message))) break; }
-  }
-  // the saved model stopped working: forget it so the next try picks again
-  if(raw===null && workingModel && lastErr?.status!==429){ workingModel=""; store.set("model_v3",""); }
+  const t0=performance.now(); let res=null, err=null;
+  try{ res=await askBrain(); }catch(e){ err=e; }
   const secs=((performance.now()-t0)/1000).toFixed(1);
   busy=false; mic.disabled=false;
-  if(raw===null){
+  if(!res){
     history.pop();
-    const s=lastErr?.status;
-    addSys(s===429?"Free limit reached for now. Wait a minute and try again.":
-           (s===400||s===401||s===403)?"Your API key didn't work. Check it in Settings.":
-           "Couldn't reach the tutor: "+(lastErr?.message||"unknown error"));
+    addSys(isKeyErr(err)?`Your ${err.provider||""} key didn't work. Check it in Settings.`:
+           err?.status===429?"Free limit reached for now. Wait a minute and try again.":
+           "The tutor is busy right now. Tap the mic and try again. ("+(err?.message||"unknown")+")");
     setStatus("Tap the mic and speak"); return;
   }
   let out;
-  try{ out=JSON.parse(raw.replace(/^```(json)?|```$/g,"").trim()); }catch{ out={reply:raw,correction:"",better:""}; }
-  history.push({role:"model",parts:[{text:JSON.stringify(out)}]});
+  try{ const m=res.raw.match(/\{[\s\S]*\}/); out=JSON.parse(m?m[0]:res.raw); }catch{ out={reply:res.raw,correction:"",better:""}; }
+  history.push({role:"assistant",text:JSON.stringify(out)});
   addTutor(out.reply||"");
   if(out.correction||out.better) addTip(out.correction,out.better);
-  addSys(`replied in ${secs}s · ${workingModel}`);
+  addSys(`replied in ${secs}s · ${res.label}`);
   let spoken=out.reply||"";
   if(out.better) spoken=`Small tip. We say: ${out.better}. ... ${spoken}`;
   speak(spoken,true);
 }
 
 /* ---------- Settings ---------- */
-function openSettings(){ $("key").value=store.get("key",""); $("settings").hidden=false; }
+function openSettings(){ $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); $("settings").hidden=false; }
 $("openSettings").onclick=openSettings;
 $("settings").onclick=e=>{ if(e.target.id==="settings") $("settings").hidden=true; };
 $("lang").value=store.get("lang","en-IN");
@@ -344,13 +393,15 @@ $("rate").value=store.get("rate","0.8"); $("rateVal").textContent=$("rate").valu
 $("rate").oninput=()=>$("rateVal").textContent=$("rate").value;
 $("saveSettings").onclick=()=>{
   store.set("key",$("key").value.trim());
+  store.set("groq_key",$("groqKey").value.trim());
+  groqModels=null; geminiModels=null; lastGood=""; store.set("last_good","");
   store.set("lang",$("lang").value); store.set("rate",$("rate").value);
   const v=voices[+$("voice").value]; if(v) store.set("voice",v.name);
   $("settings").hidden=true; addSys("Settings saved.");
 };
 
 startTopic(TOPICS[0]);
-if(!store.get("key","")) addSys("First time? Tap Settings and paste your free Gemini key.");
+if(!store.get("key","")&&!store.get("groq_key","")) addSys("First time? Tap Settings and paste your free Groq key.");
 </script>
 </body>
 </html>
