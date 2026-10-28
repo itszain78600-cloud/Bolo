@@ -82,6 +82,17 @@ footer{border-top:1px solid var(--line);background:var(--bg);padding-top:12px;pa
 .day .bar{width:100%;max-width:28px;min-height:3px;border-radius:6px 6px 2px 2px;background:var(--line)}
 .day .bar.done{background:var(--accent)}
 .phrase{border-color:var(--accent)}
+.loop{align-self:stretch;background:var(--surface);border:2px solid var(--tip-line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.loop.closed{opacity:.75;border-width:1px}
+.loop .k{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.lrow{display:flex;flex-direction:column;gap:2px}
+.lbody{display:flex;flex-direction:column;gap:8px}
+.lstep{border-top:1px solid var(--line);padding-top:8px;display:flex;flex-direction:column;gap:6px}
+.ex{font-size:.95rem;display:flex;gap:8px;align-items:baseline}
+.ex .replay{display:inline;padding:0}
+.orig2{color:var(--muted)}
+.chip2{font-size:.75rem;font-weight:700;border-radius:999px;padding:2px 8px;background:var(--tip-bg);border:1px solid var(--tip-line)}
+.chip2.ok{background:var(--me);border-color:var(--accent);color:var(--accent)}
 .iconbtn{padding:8px 10px}
 .sheet h2{font:600 1.3rem var(--display);margin:0}
 .ver{font:700 .8rem var(--body);color:var(--muted);margin-left:6px}
@@ -155,7 +166,7 @@ input[type=range]{width:100%}
 
 <div id="settings" class="overlay" hidden>
   <div class="sheet"><div class="wrap">
-    <h2>Settings <span class="ver">version 1.5</span></h2>
+    <h2>Settings <span class="ver">version 1.6</span></h2>
     <div class="field">
       <label class="label" for="about">About me (optional)</label>
       <textarea id="about" rows="3" placeholder="Example: My name is Zain. I am a nurse in Karachi. I also teach students."></textarea>
@@ -177,6 +188,13 @@ input[type=range]{width:100%}
         <option value="auto">Auto (estimate from my speaking)</option>
         <option>Beginner</option><option>Elementary</option><option>Intermediate</option><option>Advanced</option>
       </select>
+    </div>
+    <div class="field">
+      <span class="label">Mistake coaching</span>
+      <div class="seg" id="coachSeg"><button data-coach="every">Every mistake</button><button data-coach="important">Important only</button><button data-coach="talk">Just talk</button></div>
+      <p class="help">"Important only" stops to teach big mistakes (tense, word order, wrong word) and just shows a card for small slips. "Just talk" never stops.</p>
+      <span class="label">Urdu hints in explanations</span>
+      <div class="seg" id="urduSeg"><button data-urdu="off">Off</button><button data-urdu="on">On</button></div>
     </div>
     <div class="field">
       <label class="label" for="goal">Daily speaking goal</label>
@@ -328,7 +346,7 @@ const LEVEL_GUIDE={
   Advanced:"Use rich, natural English with common idioms and phrasal verbs. Practise present perfect continuous, second and third conditionals, reported speech and polite indirect questions. Ask challenging follow-up questions."
 };
 function loadProg(){
-  try{ const p=JSON.parse(store.get("progress","{}")||"{}"); return Object.assign({days:{},mistakes:[],phrases:[],guesses:[],est:"",convs:[]},p); }
+  try{ const p=JSON.parse(store.get("progress","{}")||"{}"); return Object.assign({days:{},mistakes:[],phrases:[],guesses:[],est:"",convs:[],items:[]},p); }
   catch{ return {days:{},mistakes:[],phrases:[],guesses:[],est:"",convs:[]}; }
 }
 let prog=loadProg();
@@ -423,17 +441,23 @@ function openProgress(){
   sec("Level");
   para(store.get("level","auto")==="auto"?(prog.est?`Estimated from your chats: ${prog.est}.`:"Not estimated yet. Talk for a few minutes and I'll estimate it."):`You chose: ${store.get("level")}.`);
   // mistakes
-  sec("Mistakes to practise");
+  const items=prog.items||[], mastered=items.filter(i=>i.status==="mastered"), practising=items.filter(i=>i.status!=="mastered");
+  sec(`My mistakes · ${mastered.length} mastered, ${practising.length} practising`);
   const tm=topMistakes(5);
-  if(!tm.length) para("No repeated mistakes yet. They will appear here as you talk.","help");
-  tm.forEach(([tag,n])=>{ const ex=[...prog.mistakes].reverse().find(m=>m.tag===tag);
+  if(!items.length) para("When you fix a mistake with the tutor, it appears here and comes back for review after 1, 3 and 7 days.","help");
+  [...practising,...mastered].forEach(it=>{
     const d=document.createElement("div"); d.className="pword";
-    const top=document.createElement("div"); top.className="ptop"; const b=document.createElement("b"); b.textContent=tag; const c=document.createElement("span"); c.className="help"; c.textContent=n+(n===1?" time":" times"); top.append(b,c);
-    const o=document.createElement("div"); o.className="orig"; o.textContent=ex.said;
-    const g=document.createElement("div"); g.className="good"; g.textContent=ex.better;
-    const w=document.createElement("div"); w.className="help"; w.textContent=ex.why;
+    const top=document.createElement("div"); top.className="ptop"; const b=document.createElement("b"); b.textContent=it.tag;
+    const c=document.createElement("span"); c.className="chip2 "+(it.status==="mastered"?"ok":"");
+    const daysLeft=Math.ceil((it.due-Date.now())/DAY);
+    c.textContent=it.status==="mastered"?"Mastered ✓":(it.due<=Date.now()?"Review due now":`Review in ${daysLeft} day${daysLeft===1?"":"s"}`)+` · step ${Math.min(it.stage,3)}/3`;
+    top.append(b,c);
+    const o=document.createElement("div"); o.className="orig2"; o.textContent=it.said;
+    const g=document.createElement("div"); g.className="good"; g.textContent=it.better;
+    const w=document.createElement("div"); w.className="help"; w.textContent=it.rule||it.why;
     d.append(top,o,g,w); box.appendChild(d); });
   const row=document.createElement("div"); row.className="btnrow";
+  if(dueItems().length){ row.appendChild(btn(`Review now (${dueItems().length})`,"primary",()=>{ $("progress").hidden=true; runReview(); })); }
   if(tm.length){ const b=document.createElement("button"); b.className="primary"; b.textContent="Practise my mistakes"; b.onclick=()=>{ $("progress").hidden=true; startTopic(FOCUS_TOPIC); }; row.appendChild(b); }
   const q=document.createElement("button"); q.className="smallbtn"; q.textContent="Mini quiz (optional)"; q.onclick=()=>{ $("progress").hidden=true; openQuiz(); }; row.appendChild(q);
   box.appendChild(row);
@@ -455,7 +479,7 @@ function openProgress(){
   // reset with in-page confirmation
   const rr=document.createElement("div"); rr.className="btnrow";
   const reset=document.createElement("button"); reset.className="smallbtn"; reset.textContent="Reset progress";
-  reset.onclick=()=>{ if(reset.dataset.sure){ prog={days:{},mistakes:[],phrases:[],guesses:[],est:"",convs:[]}; saveProg(); updateGoalLine(); openProgress(); }
+  reset.onclick=()=>{ if(reset.dataset.sure){ prog={days:{},mistakes:[],phrases:[],guesses:[],est:"",convs:[],items:[]}; saveProg(); updateGoalLine(); openProgress(); }
     else { reset.dataset.sure="1"; reset.textContent="Tap again to delete all progress"; } };
   rr.appendChild(reset); box.appendChild(rr);
   $("progress").hidden=false;
@@ -530,6 +554,201 @@ $("progClose").onclick=()=>{ $("progress").hidden=true; };
 $("quiz").onclick=e=>{ if(e.target.id==="quiz") $("quiz").hidden=true; };
 $("quizClose").onclick=()=>{ $("quiz").hidden=true; if(listening){ onHeard=()=>{}; stopAnyListening(); } };
 
+/* ---------- Fix-it loop + spaced review ---------- */
+// A mistake is taught (rule + examples), said correctly, then used in a NEW sentence.
+// After that it comes back for review after 1, 3 and 7 days. Three good reviews = Mastered.
+const DAY=86400000, STAGE_GAP=[0,1,3,7];          // days until the next review, by stage
+const coachMode=()=>store.get("coach","important"); // every | important | talk
+const urduHints=()=>store.get("urdu","off")==="on";
+let loop=null;
+
+function itemFor(tag){ return (prog.items=prog.items||[]).find(i=>i.tag===tag); }
+function upsertItem(tag,said,better,why,rule){
+  prog.items=prog.items||[];
+  let it=itemFor(tag);
+  if(!it){ it={id:"m"+Date.now(),tag,stage:0,status:"practising",due:Date.now(),seen:0}; prog.items.push(it); }
+  else if(it.status==="mastered"){ it.status="practising"; it.stage=0; }   // it came back: practise again
+  Object.assign(it,{said,better,why:why||it.why||"",rule:rule||it.rule||""}); it.seen++;
+  saveProg(); return it;
+}
+function passItem(it){ it.stage=Math.min(it.stage+1,4); if(it.stage>=4){ it.status="mastered"; it.due=0; } else it.due=Date.now()+STAGE_GAP[it.stage]*DAY; saveProg(); }
+function failItem(it){ it.stage=1; it.status="practising"; it.due=Date.now()+DAY; saveProg(); }
+const dueItems=()=>(prog.items||[]).filter(i=>i.status!=="mastered"&&i.due&&i.due<=Date.now());
+
+// words that changed, for red/green highlighting
+function diffLine(a,b,cls){
+  const r=compareWords(a,b), line=document.createElement("div"); line.className="pline";
+  r.words.forEach(x=>{ const s=document.createElement("span"); if(!x.ok) s.className=cls; s.textContent=x.w; line.append(s," "); });
+  return line;
+}
+function speakThen(text,cb,rate){
+  if(!("speechSynthesis" in window)||!text){ cb&&cb(); return; }
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text); const v=voices[+$("voice").value]; if(v){u.voice=v;u.lang=v.lang}else u.lang="en-US";
+  u.rate=rate||+$("rate").value; u.pitch=+store.get("pitch","1");
+  // continue even if the phone's voice never reports "finished" (some phones skip it)
+  let fired=false; const go=()=>{ if(fired) return; fired=true; clearTimeout(guard); setStatus("Tap the mic and speak"); cb&&cb(); };
+  const guard=setTimeout(go,2500+text.split(/\s+/).length*450/(u.rate||1));
+  u.onstart=()=>setStatus("Tutor is speaking…"); u.onend=go; u.onerror=go;
+  speechSynthesis.speak(u);
+}
+const btn=(text,cls,fn)=>{ const b=document.createElement("button"); b.className=cls||"smallbtn"; b.textContent=text; b.onclick=fn; return b; };
+
+// decide what happens after a corrected reply
+function shouldLoop(out){ const m=coachMode(); return m==="every"||(m==="important"&&out.severity!=="small"); }
+
+async function startFixLoop(said,better,why,tag,reply){
+  const card=document.createElement("div"); card.className="loop";
+  const head=document.createElement("div"); head.className="k"; head.textContent="Let's fix this together";
+  const yours=document.createElement("div"); yours.className="lrow"; yours.append(Object.assign(document.createElement("span"),{className:"k",textContent:"You said"}),diffLine(said,better,"miss"));
+  const right=document.createElement("div"); right.className="lrow"; right.append(Object.assign(document.createElement("span"),{className:"k",textContent:"Correct"}),diffLine(better,said,"hit"));
+  const body=document.createElement("div"); body.className="lbody"; body.innerHTML='<p class="help">Preparing a short explanation…</p>';
+  const foot=document.createElement("div"); foot.className="btnrow";
+  card.append(head,yours,right,body,foot); log.appendChild(card); scroll();
+  const it=upsertItem(tag||"grammar",said,better,why,"");
+  loop={card,body,foot,it,said,better,reply,tries:0,active:true};
+  foot.append(btn("Skip and continue","smallbtn",()=>endLoop(false)));
+  // ask for a short lesson
+  let lesson={rule:why,examples:[],urdu_hint:"",practice_prompt:""};
+  const sys=`You are a kind, clear English teacher for a ${currentLevel()} learner from Pakistan.
+The learner said: "${said}". Correct version: "${better}". Mistake type: ${tag||"grammar"}.
+Return ONLY JSON: {"rule": string (the rule for THIS mistake in max 2 short, simple sentences), "examples": [two short everyday example sentences that use the rule], "urdu_hint": string (${urduHints()?"one short Roman Urdu sentence explaining the same rule":"empty string"}), "practice_prompt": string (one short question or task that makes the learner say a NEW sentence of their own using the same rule, about their own life; not the same sentence)}`;
+  try{ const r=await askBrain(sys,[{role:"user",text:"Explain this mistake."}]); const m=r.raw.match(/\{[\s\S]*\}/); Object.assign(lesson,JSON.parse(m?m[0]:r.raw)); }catch{}
+  if(!loop||loop.card!==card) return;
+  it.rule=lesson.rule||why; saveProg();
+  loop.lesson=lesson;
+  body.innerHTML="";
+  const rule=document.createElement("p"); rule.className="psum"; rule.textContent=lesson.rule||why; body.appendChild(rule);
+  if(lesson.urdu_hint){ const u=document.createElement("p"); u.className="help"; u.textContent=lesson.urdu_hint; body.appendChild(u); }
+  (lesson.examples||[]).slice(0,2).forEach(ex=>{ const p=document.createElement("div"); p.className="ex"; p.append(btn("▶","replay",()=>speak(ex,false)),document.createTextNode(" "+ex)); body.appendChild(p); });
+  stepRepeat();
+}
+
+// Step 1: say the correct sentence
+function stepRepeat(){
+  const L=loop; if(!L) return;
+  const box=document.createElement("div"); box.className="lstep";
+  box.innerHTML='<div class="k">Step 1 of 2 · Say the correct sentence</div>';
+  const res=document.createElement("div"); box.appendChild(res);
+  const row=document.createElement("div"); row.className="btnrow";
+  row.append(btn("▶ Hear it","smallbtn",()=>speak(L.better,false)),btn("▶ Slow","smallbtn",()=>speak(L.better,false,0.6)),btn("🎙 Say it","primary",listen));
+  box.appendChild(row); L.body.appendChild(box); scroll();
+  L.listen=listen;
+  function listen(){
+    res.innerHTML='<p class="help">Listening… say the correct sentence.</p>';
+    listenOnce(heard=>{
+      if(!loop) return;
+      res.innerHTML="";
+      if(!heard){ res.innerHTML='<p class="help">I didn\'t hear anything. Tap "Say it" and try again.</p>'; return; }
+      const r=compareWords(L.better,heard); L.tries++;
+      res.appendChild(diffLine(L.better,heard,"miss"));
+      const ok=r.hit/Math.max(1,r.total)>=0.85;
+      const p=document.createElement("p"); p.className="psum";
+      if(ok){ p.textContent="✓ Well said!"; res.appendChild(p); row.remove(); speakThen("Well said! Now step two.",stepOwn); }
+      else if(L.tries<3){ p.textContent=`Almost. The app understood ${r.hit} of ${r.total} words. Listen once more and try again.`; res.appendChild(p); speakThen("Almost. Listen again.",()=>speakThen(L.better,()=>listen(),0.7)); }
+      else { p.textContent="Good effort. Let's move to step two."; res.appendChild(p); row.remove(); speakThen("Good effort. Let's try step two.",stepOwn); }
+    });
+  }
+  speakThen(`Let's fix this. ${L.lesson?.rule||""} Now please say: ${L.better}`,listen);
+}
+
+// Step 2: make your own new sentence with the same rule
+function stepOwn(){
+  const L=loop; if(!L) return;
+  const task=L.lesson?.practice_prompt||"Now make your own new sentence using the same rule.";
+  const box=document.createElement("div"); box.className="lstep";
+  box.innerHTML='<div class="k">Step 2 of 2 · Your own sentence</div>';
+  const q=document.createElement("p"); q.className="psum"; q.textContent=task; box.appendChild(q);
+  const res=document.createElement("div"); box.appendChild(res);
+  const row=document.createElement("div"); row.className="btnrow"; row.append(btn("🎙 Answer","primary",listen)); box.appendChild(row);
+  L.body.appendChild(box); scroll(); L.listen=listen; let tries=0;
+  function listen(){
+    res.innerHTML='<p class="help">Listening…</p>';
+    listenOnce(async heard=>{
+      if(!loop) return;
+      if(!heard){ res.innerHTML='<p class="help">I didn\'t hear anything. Tap "Answer" and try again.</p>'; return; }
+      res.innerHTML=""; const you=document.createElement("div"); you.className="help"; you.textContent="You said: “"+heard+"”"; res.appendChild(you);
+      const chk=document.createElement("p"); chk.className="help"; chk.textContent="Checking…"; res.appendChild(chk);
+      tries++; let v={correct:false,feedback:"",better:""};
+      const sys=`You check if an English learner used a grammar rule correctly. Their words come from speech-to-text, so ignore capitalization, punctuation and small recognition slips.
+Rule: ${L.lesson?.rule||L.it.why}. Task: ${task}
+Return ONLY JSON: {"correct": boolean (true if they answered the task and used the rule correctly), "feedback": string (max 20 words, kind), "better": string (their sentence corrected, or the same if already correct)}`;
+      try{ const r=await askBrain(sys,[{role:"user",text:heard}]); const m=r.raw.match(/\{[\s\S]*\}/); v=JSON.parse(m?m[0]:r.raw); }catch{ v={correct:true,feedback:"I couldn't check this one, but well done for trying.",better:""}; }
+      if(!loop) return;
+      chk.remove();
+      const p=document.createElement("p"); p.className="psum"; p.textContent=(v.correct?"✓ ":"")+(v.feedback||""); res.appendChild(p);
+      if(v.better&&!v.correct){ const g=document.createElement("p"); g.className="good"; g.textContent=v.better; res.appendChild(g); }
+      if(v.correct){ row.remove(); passItem(L.it); learnedNote(); }
+      else if(tries<2){ speakThen((v.feedback||"Not quite.")+" "+(v.better?"Try saying: "+v.better:""),listen); }
+      else { row.remove(); failItem(L.it); const n=document.createElement("p"); n.className="help"; n.textContent="No problem. I'll bring this back tomorrow so you can practise it again."; res.appendChild(n); speakThen("No problem. We'll practise this again tomorrow.",()=>endLoop(true)); }
+    });
+  }
+  speakThen(task,listen);
+  function learnedNote(){
+    const n=document.createElement("p"); n.className="help";
+    n.textContent=`Learned for today ✓ I'll check it again in ${STAGE_GAP[Math.min(L.it.stage,3)]} day${STAGE_GAP[Math.min(L.it.stage,3)]===1?"":"s"}.`;
+    res.appendChild(n); speakThen("Excellent! You've got it.",()=>endLoop(true));
+  }
+}
+
+function endLoop(done){
+  const L=loop; if(!L) return; loop=null;
+  if(listening){ onHeard=()=>{}; stopAnyListening(); }
+  L.foot.innerHTML=""; L.card.classList.add("closed");
+  if(!done){ L.it.due=Date.now()+4*3600000; saveProg(); }   // skipped: review it later today
+  speakThen("Now, back to our chat. "+(L.reply||""),()=>maybeAutoListen());
+}
+
+/* --- review session for due mistakes --- */
+let reviewOffered=false;
+function offerReview(force){
+  const due=dueItems(); if(!due.length||(reviewOffered&&!force)) return;
+  reviewOffered=true;
+  const d=document.createElement("div"); d.className="tip";
+  const b=document.createElement("b"); b.textContent=`Review time · ${due.length} mistake${due.length>1?"s":""} to check`; d.appendChild(b);
+  const p=document.createElement("div"); p.textContent="A quick check that you still remember what you learned. About 1 minute."; d.appendChild(p);
+  const row=document.createElement("div"); row.className="btnrow";
+  row.append(btn("Start review","primary",()=>{ d.remove(); runReview(); }),btn("Later","smallbtn",()=>d.remove()));
+  d.appendChild(row); log.appendChild(d); scroll();
+}
+async function runReview(){
+  const due=dueItems().slice(0,4); if(!due.length) return;
+  const card=document.createElement("div"); card.className="loop";
+  card.innerHTML='<div class="k">Review</div><p class="help">Preparing your review…</p>';
+  log.appendChild(card); scroll();
+  const sys=`Create review exercises for an English learner (${currentLevel()}). For each mistake below, write ONE new short sentence that contains the SAME kind of mistake (different words and situation), for the learner to say correctly.
+${due.map(i=>`- id ${i.id}: ${i.tag}. Earlier: "${i.said}" → "${i.better}". Rule: ${i.rule||i.why}`).join("\n")}
+Return ONLY JSON: {"items":[{"id": string, "wrong": string, "answer": string}]}`;
+  let items=[];
+  try{ const r=await askBrain(sys,[{role:"user",text:"Create the review."}]); const m=r.raw.match(/\{[\s\S]*\}/); items=(JSON.parse(m?m[0]:r.raw).items||[]).filter(x=>due.some(i=>i.id===x.id)); }catch{}
+  if(!items.length){ card.innerHTML='<div class="k">Review</div><p class="help">Couldn\'t prepare the review right now. I\'ll offer it again later.</p>'; return; }
+  let k=0, good=0;
+  const next=()=>{
+    if(k>=items.length){ card.innerHTML=`<div class="k">Review done</div><p class="psum">${good} of ${items.length} remembered.</p>`; speakThen(`Review done. You remembered ${good} of ${items.length}.`,()=>maybeAutoListen()); return; }
+    const x=items[k], it=(prog.items||[]).find(i=>i.id===x.id);
+    card.innerHTML=`<div class="k">Review ${k+1} of ${items.length} · ${it.tag}</div>`;
+    const q=document.createElement("p"); q.className="psum"; q.textContent="Say this sentence correctly:"; const w=document.createElement("p"); w.className="pline orig2"; w.textContent=x.wrong;
+    const res=document.createElement("div"); const row=document.createElement("div"); row.className="btnrow";
+    const go=()=>{ res.innerHTML='<p class="help">Listening…</p>'; listenOnce(async heard=>{
+      if(!heard){ res.innerHTML='<p class="help">I didn\'t hear anything. Tap "Say it".</p>'; return; }
+      res.innerHTML='<p class="help">Checking…</p>';
+      let ok=false, fb="";
+      try{ const r=await askBrain(`Check if the learner corrected the sentence. Ignore capitalization, punctuation and small speech-to-text slips. Accept any correct natural version. Return ONLY JSON {"correct": boolean, "feedback": string (max 15 words)}`,[{role:"user",text:`Wrong sentence: ${x.wrong}\nExample correct answer: ${x.answer}\nLearner said: ${heard}`}]);
+        const m=r.raw.match(/\{[\s\S]*\}/); const v=JSON.parse(m?m[0]:r.raw); ok=!!v.correct; fb=v.feedback||""; }catch{ fb="Couldn't check this one."; }
+      res.innerHTML="";
+      const p=document.createElement("p"); p.className="psum"; p.textContent=(ok?"✓ Correct. ":"Not quite. ")+fb; res.appendChild(p);
+      const g=document.createElement("p"); g.className="good"; g.textContent=x.answer; res.appendChild(g);
+      if(it){ ok?passItem(it):failItem(it); } if(ok) good++;
+      row.innerHTML=""; row.append(btn("Next","primary",()=>{ k++; next(); }));
+      speakThen(ok?"Correct!":"Not quite. We say: "+x.answer,()=>{});
+    }); };
+    row.append(btn("▶ Hear the wrong one","smallbtn",()=>speak(x.wrong,false)),btn("🎙 Say it","primary",go));
+    card.append(q,w,res,row); scroll();
+    speakThen("Say this sentence correctly. "+x.wrong,go);
+  };
+  next();
+}
+
 /* ---------- Voice out ---------- */
 let voices=[];
 function loadVoices(){
@@ -552,7 +771,7 @@ function speak(text,thenListen,rateOverride){
   u.onend=()=>{ setStatus("Tap the mic and speak"); if(thenListen) maybeAutoListen(); };
   speechSynthesis.speak(u);
 }
-function maybeAutoListen(){ if($("auto").checked&&$("practice").hidden) setTimeout(startListening,400); }
+function maybeAutoListen(){ if($("auto").checked&&$("practice").hidden&&!loop) setTimeout(startListening,400); }
 // Practice mode borrows the mic: the words go to a callback instead of the tutor
 let onHeard=null;
 function listenOnce(cb){ onHeard=cb; startListening(); }
@@ -660,6 +879,7 @@ function askToRepeat(text,alts=[]){
 }
 
 mic.onclick=()=>{
+  if(loop&&loop.listen&&!listening) return loop.listen();
   if(listening&&session){ session.stopNow=true; try{rec.stop()}catch{} }
   else if(listening&&wsession){ wsession.finish(); }
   else startListening();
@@ -766,10 +986,11 @@ Rules:
 - If the sentence was fine, set "better" and "why" to empty strings and praise naturally inside "reply" now and then.
 - If the learner says you misunderstood them, apologize in one short sentence, say the phone sometimes mishears accents, and ask them to say it again slowly or tap Edit to fix the text. Never deny something you said earlier in this chat.
 - Never use Urdu in your reply. Never lecture. Never use lists, emojis or markdown.
+- "severity": if you filled "better": "important" for mistakes in tense, word order, verb form, question form or a wrong word that changes the meaning; "small" for minor slips (a missing "the"/"a", a small preposition). Else "".
 - "grammar": if you filled "better", a short tag for the mistake type (e.g. "past simple", "present perfect", "articles", "prepositions", "subject-verb agreement", "question form", "word order", "word choice", "plurals"); else "".
 - "phrase": about once every 3-4 turns, when it fits, teach ONE useful everyday phrase or collocation for the learner's level and use it in your reply: {"phrase": string, "meaning": string (simple, max 10 words), "example": string}. Otherwise null. Never repeat a phrase they already learned.
 - "level_guess": your estimate of the learner's English level from this message: "Beginner", "Elementary", "Intermediate" or "Advanced".
-Answer ONLY as JSON: {"heard": string, "reply": string, "better": string, "why": string, "grammar": string, "phrase": object|null, "level_guess": string, "unclear": boolean}`;
+Answer ONLY as JSON: {"heard": string, "reply": string, "better": string, "why": string, "severity": string, "grammar": string, "phrase": object|null, "level_guess": string, "unclear": boolean}`;
 }
 
 // fetch with a time limit, so one stuck model never blocks the conversation
@@ -893,11 +1114,14 @@ async function sendToTutor(userText,alts=[]){
   const better=(!out.unclear&&out.better&&out.better.trim().toLowerCase().replace(/[.,!?]/g,"")!==said)?out.better.trim():"";
   if(out.unclear) history.pop(); else history.push({role:"assistant",text:JSON.stringify({heard:out.heard,reply:out.reply,better:out.better||"",why:out.why||""})});
   addTutor(out.reply||"");
-  if(better) addFix((out.heard||userText).trim(),better,out.why||"");
+  const heardTxt=(out.heard||userText).trim();
+  const doLoop=better&&shouldLoop(out);
+  if(better&&!doLoop) addFix(heardTxt,better,out.why||"");
   addSys(`replied in ${secs}s · ${res.label}`);
   if(!out.unclear) recordTurn(out,(out.heard||userText).trim(),better);
   let spoken=out.reply||"";
-  if(better) spoken=`A more natural way to say it: ${better}. ... ${spoken}`;
+  if(doLoop){ startFixLoop(heardTxt,better,out.why||"",out.grammar||"",out.reply||""); return; }
+  if(better&&coachMode()!=="talk") spoken=`A more natural way to say it: ${better}. ... ${spoken}`;
   speak(spoken,true);
 }
 
@@ -1005,7 +1229,7 @@ $("pSay").onclick=practiseSay;
 $("pTarget").onchange=()=>{ const t=$("pTarget").value.trim(); $("pResult").innerHTML=""; if(t) loadBreakdown(t); else $("pWords").innerHTML=""; };
 
 /* ---------- Settings ---------- */
-function openSettings(){ $("level").value=store.get("level","auto"); $("goal").value=store.get("goal","10"); $("about").value=store.get("about",""); $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); pendingEngine=getEngine(); syncSeg("engineSeg","engine",pendingEngine); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
+function openSettings(){ pendingCoach=coachMode(); pendingUrdu=store.get("urdu","off"); syncSeg("coachSeg","coach",pendingCoach); syncSeg("urduSeg","urdu",pendingUrdu); $("level").value=store.get("level","auto"); $("goal").value=store.get("goal","10"); $("about").value=store.get("about",""); $("key").value=store.get("key",""); $("groqKey").value=store.get("groq_key",""); pendingPitch=store.get("pitch","1"); pendingPause=store.get("pause","normal"); pendingEngine=getEngine(); syncSeg("engineSeg","engine",pendingEngine); syncSeg("toneSeg","pitch",pendingPitch); syncSeg("pauseSeg","pause",pendingPause); $("settings").hidden=false; }
 $("openSettings").onclick=openSettings;
 $("settings").onclick=e=>{ if(e.target.id==="settings") $("settings").hidden=true; };
 $("lang").value=store.get("lang","en-IN");
@@ -1013,6 +1237,9 @@ $("rate").value=store.get("rate","0.8"); $("rateVal").textContent=$("rate").valu
 function syncSeg(id,attr,val){ [...$(id).children].forEach(b=>b.setAttribute("aria-pressed",String(b.dataset[attr]===String(val)))); }
 $("rate").oninput=()=>{ $("rateVal").textContent=$("rate").value; syncSeg("speedSeg","rate",+$("rate").value); };
 $("speedSeg").onclick=e=>{ const r=e.target.dataset?.rate; if(!r) return; $("rate").value=r; $("rate").oninput(); };
+let pendingCoach=coachMode(), pendingUrdu=store.get("urdu","off");
+$("coachSeg").onclick=e=>{ const v=e.target.dataset?.coach; if(!v) return; pendingCoach=v; syncSeg("coachSeg","coach",v); };
+$("urduSeg").onclick=e=>{ const v=e.target.dataset?.urdu; if(!v) return; pendingUrdu=v; syncSeg("urduSeg","urdu",v); };
 let pendingPitch=store.get("pitch","1"), pendingPause=store.get("pause","normal"), pendingEngine=getEngine();
 $("engineSeg").onclick=e=>{ const v=e.target.dataset?.engine; if(!v) return; pendingEngine=v; syncSeg("engineSeg","engine",v); };
 $("toneSeg").onclick=e=>{ const p=e.target.dataset?.pitch; if(!p) return; pendingPitch=p; syncSeg("toneSeg","pitch",p); };
@@ -1028,6 +1255,7 @@ $("saveSettings").onclick=()=>{
   store.set("key",$("key").value.trim());
   store.set("groq_key",$("groqKey").value.trim());
   store.set("about",$("about").value.trim());
+  store.set("coach",pendingCoach); store.set("urdu",pendingUrdu);
   store.set("level",$("level").value); store.set("goal",$("goal").value); updateGoalLine();
   groqModels=null; geminiModels=null; lastGood=""; store.set("last_good_v13","");
   store.set("lang",$("lang").value); store.set("rate",$("rate").value);
@@ -1038,6 +1266,8 @@ $("saveSettings").onclick=()=>{
 
 startTopic(TOPICS[0]);
 updateGoalLine();
+syncSeg("coachSeg","coach",coachMode()); syncSeg("urduSeg","urdu",store.get("urdu","off"));
+setTimeout(()=>offerReview(),1200);
 if(!store.get("key","")&&!store.get("groq_key","")) addSys("First time? Tap Settings and paste your free Groq key.");
 </script>
 </body>
